@@ -8,7 +8,7 @@ import { insightsRpc, type Target } from "./shared/metrics.ts";
 export default function contribute(client: PluginClientContext) {
   const lifetime = new AbortController();
   const entries = new Map<string, Target & {
-    session: InsightSession; runtimeId: string | null; running: boolean;
+    session: InsightSession; runtimeId: string | null;
   }>();
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
@@ -53,22 +53,17 @@ export default function contribute(client: PluginClientContext) {
     const existing = entries.get(agent.id);
     if (existing?.workspaceId === agent.workspaceId) {
       if (existing.runtimeId !== runtimeId) {
-        entries.set(agent.id, { ...existing, runtimeId, running });
+        entries.set(agent.id, { ...existing, runtimeId });
         existing.session.invalidate();
-      } else {
-        if (existing.running && !running) existing.session.refreshIfMounted();
-        existing.running = running;
       }
+      existing.session.setRunning(running);
       return;
     }
     remove(agent.id);
     const target = { workspaceId: agent.workspaceId, agentId: agent.id };
-    entries.set(agent.id, {
-      ...target,
-      session: createSession(() => client.rpc(insightsRpc, target)),
-      runtimeId,
-      running,
-    });
+    const session = createSession(() => client.rpc(insightsRpc, target));
+    session.setRunning(running);
+    entries.set(agent.id, { ...target, session, runtimeId });
   };
 
   void client.paseo.agents.list({ subscribe: {}, signal: lifetime.signal }).then(({ subscription }) => {

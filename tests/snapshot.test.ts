@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fieldGlyphs } from "../client/glyphs.ts";
 import { findFocusedAgent } from "../client/focus.ts";
 import { createSession } from "../client/session.ts";
 import { fixtureSnapshot } from "../server/fixture.ts";
@@ -14,16 +13,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-test("both surfaces keep the same 16 metrics, legacy icon shapes, units and groups", () => {
+test("both surfaces keep the same 16 metrics, units and groups", () => {
   const fixture = snapshotSchema.parse(fixtureSnapshot(100));
   assert.deepEqual(detailGroups.flatMap(group => [...group.ids]), [...metricIds]);
   assert.deepEqual(metricIds.map(id => formatMetric(id, fixture.metrics[id], true)),
     ["25.9M", "1.34M", "22.5M", "87%", "12", "4.28 USD", "1.2s", "46 tok/s", "3", "1", "12", "2", "2", "1", "0", "1"]);
   assert.equal(formatMetric("cost", { state: "partial", value: [{ amount: "2.34", currency: "CRED" }] }, true), "2.34 CRED");
-  assert.deepEqual(Object.keys(fieldGlyphs), [...metricIds]);
-  assert.deepEqual(Object.values(fieldGlyphs).map(glyph => glyph.codePointAt(0)),
-    [0xF021A, 0xF021A, 0xF0CFF, 0xF0CFF, 0xF1B8, 0xF0584, 0xEF0C, 0xF04C5, 0xF0EA6, 0xF0EA6, 0xF0EA6, 0xF0EA6,
-      0xF01D, 0xF192, 0xF29C, 0xF05D]);
   assert.equal(formatMetric("input", fixture.metrics.input), "25.90M");
   assert.equal(formatMetric("cache", fixture.metrics.cache), "87.00%");
   assert.equal(formatMetric("cost", fixture.metrics.cost), "4.28 USD");
@@ -72,6 +67,56 @@ test("desktop requests share one fetch and reject old thread responses after inv
   session.invalidate();
   await Promise.resolve();
   assert.equal(calls, 2);
+  session.dispose();
+});
+
+test("visible sessions poll while running, settle once and pause when idle or hidden", async ({ mock }) => {
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
+  const reads: number[] = [];
+  const session = createSession(async () => {
+    reads.push(Date.now());
+    return fixtureSnapshot(Date.now());
+  });
+  const flush = async (elapsed = 0) => {
+    mock.timers.tick(elapsed);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  session.setForeground(true);
+  const detach = session.attach();
+  await flush();
+  await flush(30_000);
+  assert.deepEqual(reads, [1_000]);
+
+  session.setRunning(true);
+  await flush();
+  await flush(15_000);
+  assert.deepEqual(reads, [1_000, 31_000, 46_000]);
+  await flush(12_000);
+  session.setRunning(false);
+  await flush(4_999);
+  assert.equal(reads.length, 3);
+  await flush(1);
+  assert.deepEqual(reads, [1_000, 31_000, 46_000, 63_000]);
+  await flush(60_000);
+  assert.equal(reads.length, 4);
+  assert.equal(session.current().metrics.input.observedAt, 63_000);
+
+  await session.refresh();
+  assert.equal(reads.length, 5);
+  session.setForeground(false);
+  session.setRunning(true);
+  await flush(30_000);
+  assert.equal(reads.length, 5);
+  session.setForeground(true);
+  await flush();
+  assert.equal(reads.length, 6);
+  detach();
+  await flush(30_000);
+  assert.equal(reads.length, 6);
   session.dispose();
 });
 

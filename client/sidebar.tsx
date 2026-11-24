@@ -1,10 +1,10 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Modal } from "@getpaseo/plugin/client/ui";
-import { useState, useSyncExternalStore } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { AppState, Pressable, Text, View } from "react-native";
 import { formatMetric, stateLabels } from "../shared/format.ts";
 import { detailGroups, labels, type MetricId } from "../shared/metrics.ts";
-import { Details, useRefreshWhileVisible } from "./details.tsx";
+import { Details } from "./details.tsx";
 import type { InsightSession } from "./session.ts";
 
 const shortLabels = {
@@ -23,7 +23,15 @@ export function SidebarMetrics({
   const { foreground, foregroundMuted } = theme.colors;
   const metricSize = 14;
   const columnGap = layout.compact ? 24 : 16;
-  useRefreshWhileVisible(session);
+  useEffect(() => {
+    session.setForeground(AppState.currentState === "active" || AppState.currentState === null);
+    const detach = session.attach();
+    const subscription = AppState.addEventListener("change", state => session.setForeground(state === "active"));
+    return () => {
+      subscription.remove();
+      detach();
+    };
+  }, [session]);
   const status = [
     snapshot.fixture ? "演示数据" : "",
     ...detailGroups.flatMap(group => group.ids).flatMap(id => {
@@ -54,7 +62,10 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 15 }}>会话指标</Text>
         <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 13 }}>{title}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
+        <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => {
+          setOpen(true);
+          void session.refresh();
+        }}
           style={{ minHeight: layout.compact ? 44 : 24, paddingHorizontal: 4, justifyContent: "center" }}>
           <Text style={{ color: foregroundMuted, fontSize: 13 }}>详情</Text>
         </Pressable>

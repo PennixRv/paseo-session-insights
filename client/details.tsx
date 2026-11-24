@@ -1,9 +1,8 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { AppState, Platform, Pressable, Text, View, useWindowDimensions } from "react-native";
+import { useState, useSyncExternalStore } from "react";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import { formatMetric, stateLabels } from "../shared/format.ts";
 import { detailGroups, labels, type Metric, type MetricSource } from "../shared/metrics.ts";
-import { fieldGlyphs } from "./glyphs.ts";
 import type { InsightSession } from "./session.ts";
 
 const sourceLabels: Record<MetricSource, string> = {
@@ -23,31 +22,13 @@ function metadata(reading: Metric): string {
   ].filter(Boolean).join(" · ");
 }
 
-export function useRefreshWhileVisible(session: InsightSession) {
-  useEffect(() => {
-    const detach = session.attach();
-    const refresh = () => {
-      if (AppState.currentState === "active" || AppState.currentState === null) void session.refresh();
-    };
-    refresh();
-    const subscription = AppState.addEventListener("change", refresh);
-    const timer = setInterval(refresh, 15_000);
-    return () => {
-      clearInterval(timer);
-      subscription.remove();
-      detach();
-    };
-  }, [session]);
-}
-
 export function Details({
   theme, layout, session, codexSessionId,
 }: Pick<PluginSidebarItemProps, "theme" | "layout"> & { session: InsightSession; codexSessionId: string | null }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const { fontScale, width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
-  const showGlyphs = !layout.compact && Platform.OS !== "ios" && Platform.OS !== "android";
-  const singleColumn = fontScale >= 1.25 || width < 360;
+  const columns = fontScale >= 1.25 || width < 360 ? 1 : 2;
   const { colors } = theme;
 
   return (
@@ -76,28 +57,22 @@ export function Details({
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
           <Text accessibilityRole="header" style={{ color: colors.foreground, fontWeight: "600" }}>{group.title}</Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-            {group.ids.map(id => {
-              const reading = snapshot.metrics[id];
-              const context = metadata(reading);
-              return (
-                <View key={id} style={{ width: singleColumn ? "100%" : "50%", padding: 3 }}>
-                  <View style={{ backgroundColor: colors.surface1, borderRadius: 8, padding: layout.compact ? 8 : 10, gap: 3 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                      {showGlyphs && (
-                        <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                          <Text style={{ fontSize: 14, color: colors.foregroundMuted }}>{fieldGlyphs[id]}</Text>
-                        </View>
-                      )}
-                      <Text style={{ color: colors.foregroundMuted, flexShrink: 1 }}>{labels[id]}</Text>
-                    </View>
+          {Array.from({ length: Math.ceil(group.ids.length / columns) }, (_, row) => (
+            <View key={row} style={{ flexDirection: "row", gap: 6, alignItems: "stretch" }}>
+              {group.ids.slice(row * columns, (row + 1) * columns).map(id => {
+                const reading = snapshot.metrics[id];
+                const context = metadata(reading);
+                return (
+                  <View key={id} testID={`insights-detail-metric-${id}`}
+                    style={{ flex: 1, minWidth: 0, backgroundColor: colors.surface1, borderRadius: 8, padding: layout.compact ? 8 : 10, gap: 3 }}>
+                    <Text style={{ color: colors.foregroundMuted }}>{labels[id]}</Text>
                     <Text style={{ color: colors.foreground, fontVariant: ["tabular-nums"] }}>{formatMetric(id, reading)}</Text>
                     {!!context && <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{context}</Text>}
                   </View>
-                </View>
-              );
-            })}
-          </View>
+                );
+              })}
+            </View>
+          ))}
         </View>
       ))}
     </View>

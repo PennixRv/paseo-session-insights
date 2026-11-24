@@ -1,7 +1,7 @@
 {
   "name": "paseo-session-insights",
   "private": true,
-  "version": "0.1.11",
+  "version": "0.1.12",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
@@ -12,8 +12,7 @@
     "index.server.tsx",
     "client/",
     "server/",
-    "shared/",
-    "licenses/"
+    "shared/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
