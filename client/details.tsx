@@ -1,4 +1,4 @@
-import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
+import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AppState, Platform, Pressable, Text, View, useWindowDimensions } from "react-native";
 import { formatMetric, stateLabels } from "../shared/format.ts";
@@ -23,9 +23,8 @@ function metadata(reading: Metric): string {
   ].filter(Boolean).join(" · ");
 }
 
-export function useRefreshWhileVisible(session: InsightSession, enabled = true) {
+export function useRefreshWhileVisible(session: InsightSession) {
   useEffect(() => {
-    if (!enabled) return;
     const detach = session.attach();
     const refresh = () => {
       if (AppState.currentState === "active" || AppState.currentState === null) void session.refresh();
@@ -38,19 +37,18 @@ export function useRefreshWhileVisible(session: InsightSession, enabled = true) 
       subscription.remove();
       detach();
     };
-  }, [enabled, session]);
+  }, [session]);
 }
 
 export function Details({
   theme, layout, session,
-}: Pick<PluginButtonContentProps, "theme" | "layout"> & { session: InsightSession }) {
+}: Pick<PluginSidebarItemProps, "theme" | "layout"> & { session: InsightSession }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const { fontScale, width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
-  const mobile = Platform.OS === "ios" || Platform.OS === "android";
+  const showGlyphs = !layout.compact && Platform.OS !== "ios" && Platform.OS !== "android";
   const singleColumn = fontScale >= 1.25 || width < 360;
   const { colors } = theme;
-  useRefreshWhileVisible(session, mobile);
 
   return (
     <View style={{ gap: 14 }}>
@@ -80,7 +78,7 @@ export function Details({
                 <View key={id} style={{ width: singleColumn ? "100%" : "50%", padding: 3 }}>
                   <View style={{ backgroundColor: colors.surface1, borderRadius: 8, padding: layout.compact ? 8 : 10, gap: 3 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                      {!mobile && (
+                      {showGlyphs && (
                         <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                           <Text style={{ fontSize: 14, color: colors.foregroundMuted }}>{fieldGlyphs[id]}</Text>
                         </View>

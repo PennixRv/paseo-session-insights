@@ -1,7 +1,5 @@
 import { useAgent, useComposers, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useSyncExternalStore } from "react";
-import { Platform } from "react-native";
-import { Details } from "./client/details.tsx";
 import { findFocusedAgent } from "./client/focus.ts";
 import { createSession, type InsightSession } from "./client/session.ts";
 import { SidebarMetrics } from "./client/sidebar.tsx";
@@ -9,9 +7,8 @@ import { insightsRpc, type Target } from "./shared/metrics.ts";
 
 export default function contribute(client: PluginClientContext) {
   const lifetime = new AbortController();
-  const desktop = Platform.OS !== "ios" && Platform.OS !== "android";
   const entries = new Map<string, Target & {
-    session: InsightSession; runtimeId: string | null; running: boolean; remove(): void;
+    session: InsightSession; runtimeId: string | null; running: boolean;
   }>();
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
@@ -23,7 +20,7 @@ export default function contribute(client: PluginClientContext) {
   function Footer(props: PluginSidebarItemProps) {
     const [focused] = useComposers({ focused: true });
     const entry = useSyncExternalStore(subscribe, () => {
-      if (props.layout.compact || !focused) return null;
+      if (!focused) return null;
       const id = findFocusedAgent(client.composers, entries.keys());
       return id === null ? null : entries.get(id) ?? null;
     });
@@ -32,13 +29,13 @@ export default function contribute(client: PluginClientContext) {
     return <SidebarMetrics key={agent.ref.key} {...props} title={agent.title} session={entry.session} />;
   }
 
-  const unregisterFooter = desktop ? client.addSidebarFooterItem({
+  const unregisterFooter = client.addSidebarFooterItem({
     id: "session-insights",
     title: "会话指标",
     Component: Footer,
-  }) : null;
+  });
   const remove = (id: string) => {
-    entries.get(id)?.remove();
+    entries.get(id)?.session.dispose();
     entries.delete(id);
   };
   const upsert = (agent: {
@@ -55,30 +52,17 @@ export default function contribute(client: PluginClientContext) {
     const existing = entries.get(agent.id);
     if (existing?.workspaceId === agent.workspaceId) {
       if (existing.runtimeId !== runtimeId) existing.session.invalidate();
-      else if (existing.running && !running && desktop) existing.session.refreshIfMounted();
+      else if (existing.running && !running) existing.session.refreshIfMounted();
       Object.assign(existing, { runtimeId, running });
       return;
     }
     remove(agent.id);
     const target = { workspaceId: agent.workspaceId, agentId: agent.id };
-    const session = createSession(() => client.rpc(insightsRpc, target));
-    const pill = desktop ? null : client.addComposerPill({
-      ...target,
-      id: "session-insights",
-      button: {
-        title: "会话指标",
-        icon: "ChartNoAxesColumnIncreasing",
-        behavior: { kind: "popover", Content: props => (
-          <Details theme={props.theme} layout={props.layout} session={session} />
-        ) },
-      },
-    });
     entries.set(agent.id, {
-      ...target, session, runtimeId, running,
-      remove() {
-        session.dispose();
-        pill?.remove();
-      },
+      ...target,
+      session: createSession(() => client.rpc(insightsRpc, target)),
+      runtimeId,
+      running,
     });
   };
 
@@ -105,7 +89,7 @@ export default function contribute(client: PluginClientContext) {
   });
   return () => {
     lifetime.abort();
-    unregisterFooter?.();
+    unregisterFooter();
     for (const id of entries.keys()) remove(id);
     notify();
     listeners.clear();

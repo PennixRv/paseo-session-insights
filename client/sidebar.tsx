@@ -44,7 +44,7 @@ export function SidebarMetrics({
         <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 13 }}>会话指标</Text>
         <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 11 }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
-          style={{ minHeight: 24, paddingHorizontal: 4, justifyContent: "center" }}>
+          style={{ minHeight: layout.compact ? 44 : 24, paddingHorizontal: 4, justifyContent: "center" }}>
           <Text style={{ color: foregroundMuted, fontSize: 11 }}>详情</Text>
         </Pressable>
       </View>
