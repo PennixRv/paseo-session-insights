@@ -99,10 +99,18 @@ test("Trellis reports only project counts and skips projects without a task dire
     assert.equal((await readProgress(root, run)).planning?.state, "unsupported");
     assert.equal(calls, 0);
     await mkdir(join(root, ".trellis", "tasks"), { recursive: true });
-    assert.deepEqual(Object.keys(await readProgress(root, run)), ["planning", "inProgress", "completed"]);
-    assert.deepEqual((await readProgress(root, run, () => 20)).planning, {
+    const current = await readProgress(root, run, () => 20);
+    assert.deepEqual(Object.keys(current), ["planning", "inProgress", "completed", "cancelled"]);
+    assert.deepEqual(current.planning, {
       state: "partial", value: 0, source: "trellis", observedAt: 20,
     });
+    assert.deepEqual(current.cancelled, {
+      state: "partial", value: 9, source: "trellis", observedAt: 20,
+    });
+    const previous = { planning: 0, in_progress: 2, completed: 3 };
+    assert.equal((await readProgress(root, async () => previous)).cancelled?.state, "unsupported");
+    const zero = await readProgress(root, async () => ({ ...previous, cancelled: 0 }), () => 20);
+    assert.deepEqual(zero.cancelled, { state: "ready", value: 0, source: "trellis", observedAt: 20 });
   } finally { await rm(root, { recursive: true }); }
 });
 

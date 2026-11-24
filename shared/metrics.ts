@@ -3,21 +3,21 @@ import { z } from "zod";
 
 export const metricIds = [
   "input", "output", "cachedInput", "cache", "compactions", "cost", "ttft", "tps",
-  "planning", "inProgress", "completed", "working", "idle", "error", "ended",
+  "planning", "inProgress", "completed", "cancelled", "working", "idle", "error", "ended",
 ] as const;
 export type MetricId = typeof metricIds[number];
 
 export const labels: Record<MetricId, string> = {
   input: "累计输入（含缓存）", output: "累计输出", cachedInput: "累计缓存输入", cache: "输入缓存命中率", compactions: "已完成压缩",
   cost: "已结算费用", ttft: "首 token 耗时", tps: "流式输出速率",
-  planning: "规划", inProgress: "进行", completed: "完成",
+  planning: "规划", inProgress: "进行", completed: "完成", cancelled: "已取消",
   working: "执行", idle: "空闲", error: "出错", ended: "最近结束",
 };
 
 export const detailGroups = [
   { title: "本会话", ids: ["input", "output", "cachedInput", "cache", "compactions", "cost"] },
   { title: "最近流式请求样本", ids: ["ttft", "tps"] },
-  { title: "Trellis 项目进度", ids: ["planning", "inProgress", "completed"] },
+  { title: "Trellis 项目进度", ids: ["planning", "inProgress", "completed", "cancelled"] },
   { title: "Teamwork 协作", ids: ["working", "idle", "error", "ended"] },
 ] as const satisfies readonly { title: string; ids: readonly MetricId[] }[];
 

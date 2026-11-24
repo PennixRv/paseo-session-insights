@@ -12,6 +12,7 @@ export const fieldGlyphs = {
   planning: "\u{F0EA6}",
   inProgress: "\u{F0EA6}",
   completed: "\u{F0EA6}",
+  cancelled: "\u{F0EA6}",
   working: "\u{F01D}",
   idle: "\u{F192}",
   error: "\u{F29C}",

@@ -9,7 +9,7 @@ import type { InsightSession } from "./session.ts";
 
 const shortLabels = {
   input: "输入", output: "输出", cachedInput: "缓存输入", cache: "缓存率", compactions: "压缩", cost: "已结算",
-  ttft: "首 token", tps: "输出速率", planning: "规划", inProgress: "进行", completed: "完成",
+  ttft: "首 token", tps: "输出速率", planning: "规划", inProgress: "进行", completed: "完成", cancelled: "取消",
   working: "执行", idle: "空闲", error: "出错", ended: "最近结束",
 } satisfies Record<MetricId, string>;
 
@@ -18,15 +18,16 @@ export function SidebarMetrics({
 }: Pick<PluginSidebarItemProps, "theme" | "layout"> & { session: InsightSession; title: string | null }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const [open, setOpen] = useState(false);
-  const { foreground, foregroundMuted, border } = theme.colors;
+  const { foreground, foregroundMuted } = theme.colors;
   const fontIncrease = layout.platform === "android" || layout.platform === "ios" ? 2 : 0;
   const labelSize = fontIncrease ? 14 : 11;
+  const columnGap = layout.compact ? 24 : 16;
   useRefreshWhileVisible(session);
   const status = [
     snapshot.fixture ? "演示数据" : "",
     ...detailGroups.flatMap(group => group.ids).flatMap(id => {
       const reading = snapshot.metrics[id];
-      if (reading.state === "partial") return [`${shortLabels[id]}：${reading.basis ?? "覆盖不完整"}`];
+      if (reading.state === "partial" && id !== "cost") return [`${shortLabels[id]}：${reading.basis ?? "覆盖不完整"}`];
       if (reading.state === "stale") return [`${shortLabels[id]}：已过期`];
       return [];
     }),
@@ -47,7 +48,7 @@ export function SidebarMetrics({
   const sessionRows = [...detailGroups[0].ids, ...detailGroups[1].ids];
 
   return (
-    <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5, borderTopColor: border, borderTopWidth: 1 }}>
+    <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 13 + fontIncrease }}>会话指标</Text>
         <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 11 + fontIncrease }}>{title}</Text>
@@ -57,11 +58,16 @@ export function SidebarMetrics({
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {sessionRows.map(id => <View key={id} style={{ width: "50%", paddingRight: 6, paddingBottom: 3 }}>{renderMetric(id)}</View>)}
+        {sessionRows.map((id, index) => (
+          <View key={id} style={{
+            width: "50%", paddingBottom: 3,
+            ...(index % 2 === 0 ? { paddingRight: columnGap / 2 } : { paddingLeft: columnGap / 2 }),
+          }}>{renderMetric(id)}</View>
+        ))}
       </View>
-      <View style={{ flexDirection: "row", gap: 10 }}>
+      <View style={{ flexDirection: "row", gap: columnGap }}>
         {detailGroups.slice(2).map((group, index) => (
-          <View key={group.title} style={{ flex: 1, gap: 3 }}>
+          <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
             <Text accessibilityRole="header" style={{ color: foregroundMuted, fontSize: labelSize, fontWeight: "600" }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>

@@ -2,16 +2,16 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import type { Metric, MetricId } from "../shared/metrics.ts";
+import { detailGroups, type Metric, type MetricId } from "../shared/metrics.ts";
 
 type Projection = Partial<Record<MetricId, Metric>>;
 type RunJson = (args: string[], cwd: string, ms: number) => Promise<unknown>;
 const counts = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const progress = z.object({ planning: counts, in_progress: counts, completed: counts, partial: z.boolean().optional() });
+const progress = z.object({ planning: counts, in_progress: counts, completed: counts, cancelled: counts.optional(), partial: z.boolean().optional() });
 const channel = z.object({ name: z.string().regex(/^[a-zA-Z0-9_.][a-zA-Z0-9_.-]{0,127}$/),
   project: z.string().min(1).max(512).optional(), ownerSessionId: z.string() });
 const worker = z.object({ workerId: z.string().min(1), lifecycle: z.string(), activity: z.string().optional(), updatedAt: z.string().optional() });
-const tasks = ["planning", "inProgress", "completed"] as const;
+const tasks = detailGroups[2].ids;
 const members = ["working", "idle", "error", "ended"] as const;
 
 function unavailable(ids: readonly MetricId[], state: "unsupported" | "waiting" | "error"): Projection {
@@ -39,10 +39,14 @@ export async function readProgress(cwd: string | null, run: RunJson, clock = Dat
     if (!(await stat(join(cwd, ".trellis", "tasks"))).isDirectory()) return unavailable(tasks, "unsupported");
     const data = progress.parse(await run(["task", "progress", "--json"], cwd, 2000));
     const observedAt = clock();
-    return Object.fromEntries(tasks.map((id, index) => [id, {
-      state: data.partial ? "partial" : "ready", source: "trellis", observedAt,
-      value: [data.planning, data.in_progress, data.completed][index],
-    }]));
+    const values = { planning: data.planning, inProgress: data.in_progress, completed: data.completed, cancelled: data.cancelled };
+    return Object.fromEntries(tasks.map(id => {
+      const value = values[id];
+      const reading: Metric = value === undefined
+        ? { state: "unsupported", source: "trellis", observedAt, basis: "当前 Trellis 未提供取消计数" }
+        : { state: data.partial ? "partial" : "ready", source: "trellis", observedAt, value };
+      return [id, reading];
+    }));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return unavailable(tasks, "unsupported");
     return unavailable(tasks, "error");
