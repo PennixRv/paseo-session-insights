@@ -41,8 +41,8 @@ export function useRefreshWhileVisible(session: InsightSession) {
 }
 
 export function Details({
-  theme, layout, session,
-}: Pick<PluginSidebarItemProps, "theme" | "layout"> & { session: InsightSession }) {
+  theme, layout, session, codexSessionId,
+}: Pick<PluginSidebarItemProps, "theme" | "layout"> & { session: InsightSession; codexSessionId: string | null }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const { fontScale, width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
@@ -53,8 +53,13 @@ export function Details({
   return (
     <View style={{ gap: 14 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        {snapshot.fixture && <Text style={{ color: colors.foregroundMuted }}>演示数据</Text>}
+        <Text testID="insights-codex-session-id" selectable
+          accessibilityLabel={codexSessionId ? `Codex 会话 ID ${codexSessionId}` : undefined}
+          style={{ flex: 1, minWidth: 0, color: colors.foregroundMuted, fontSize: 12 }}>
+          {codexSessionId ?? "等待 Codex 会话 ID"}
+        </Text>
         <Pressable
+          testID="insights-details-refresh"
           accessibilityRole="button"
           accessibilityState={{ busy: refreshing, disabled: refreshing }}
           disabled={refreshing}
@@ -62,11 +67,12 @@ export function Details({
             setRefreshing(true);
             void session.refresh().finally(() => setRefreshing(false));
           }}
-          style={{ paddingHorizontal: 8, minHeight: 32, justifyContent: "center", marginLeft: "auto" }}
+          style={{ flexShrink: 0, paddingHorizontal: 8, minHeight: 32, justifyContent: "center" }}
         >
           <Text style={{ color: colors.foreground }}>{refreshing ? "正在刷新" : "刷新"}</Text>
         </Pressable>
       </View>
+      {snapshot.fixture && <Text style={{ color: colors.foregroundMuted }}>演示数据</Text>}
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
           <Text accessibilityRole="header" style={{ color: colors.foreground, fontWeight: "600" }}>{group.title}</Text>

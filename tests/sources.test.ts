@@ -285,3 +285,51 @@ test("CCHP totals the session beyond three pages and refreshes performance betwe
   assert.equal(next.cost && "observedAt" in next.cost && next.cost.observedAt, clock);
   assert.equal(pages, 13);
 });
+
+test("CCHP resumes billing past 2,000 requests and checks the newest stream separately", async () => {
+  const signal = new AbortController().signal;
+  const opts = { baseUrl: "https://gateway.invalid", token: "fixture-key", apiKeyId: "key1" };
+  let clock = 60_000;
+  const deepPages: number[] = [];
+  let rateLimited = false;
+  const read = createCchpReader(opts, async input => {
+    const url = new URL(String(input));
+    const offset = Number(url.searchParams.get("cursor") ?? 0);
+    const cutoff = url.searchParams.get("end");
+    if (cutoff) {
+      assert.equal(cutoff, new Date(60_000).toISOString());
+      deepPages.push(offset);
+      if (offset === 2000 && !rateLimited) {
+        rateLimited = true;
+        return new Response(null, { status: 429, headers: { "Retry-After": "1" } });
+      }
+    }
+    const limit = Number(url.searchParams.get("limit"));
+    const end = Math.min(offset + limit, 2031);
+    return Response.json({ page: {
+      nextCursor: end < 2031 ? String(end) : null,
+      items: Array.from({ length: end - offset }, (_, index) => {
+        // The final page overlaps the previous one by one record.
+        const ordinal = Math.max(0, offset + index - (offset >= 2000 ? 1 : 0));
+        return {
+          requestId: `req-${ordinal}`, sessionId: "thread", apiKeyId: "key1",
+          completedAt: new Date(clock - ordinal).toISOString(), streaming: true,
+          ttftMs: clock, tpsMilli: 42_000, tpsBasis: "ttfb",
+          costUnits: 10_000_000_000, adjustedCostUnits: null,
+        };
+      }),
+    } });
+  }, () => clock);
+  const partial = (await read("thread", signal)).cost;
+  assert.equal(partial?.state, "partial");
+  assert.equal(partial?.basis, "仍在查询，已读取 2000 条请求");
+  clock += 15_000;
+  assert.equal((await read("thread", signal)).cost?.state, "rate-limited");
+  assert.equal((await read("thread", signal)).cost?.state, "rate-limited");
+  clock += 15_000;
+  const final = await read("thread", signal);
+  assert.deepEqual(deepPages, [...Array.from({ length: 10 }, (_, i) => i * 200), 2000, 2000]);
+  assert.deepEqual(final.cost, { source: "cchp", observedAt: clock, state: "ready",
+    basis: "已查询 2030 条请求", value: [{ currency: "CRED", amount: "2030" }] });
+  assert.equal(final.ttft && "value" in final.ttft && final.ttft.value, clock);
+});

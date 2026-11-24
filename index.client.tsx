@@ -26,7 +26,8 @@ export default function contribute(client: PluginClientContext) {
     });
     const agent = useAgent(entry?.agentId ?? "");
     if (!entry || !agent || agent.hostId !== props.host.id || agent.workspaceId !== entry.workspaceId) return null;
-    return <SidebarMetrics key={agent.ref.key} {...props} title={agent.title} session={entry.session} />;
+    return <SidebarMetrics key={agent.ref.key} {...props} title={agent.title}
+      session={entry.session} codexSessionId={entry.runtimeId} />;
   }
 
   const unregisterFooter = client.addSidebarFooterItem({
@@ -51,9 +52,13 @@ export default function contribute(client: PluginClientContext) {
     const running = agent.status === "running";
     const existing = entries.get(agent.id);
     if (existing?.workspaceId === agent.workspaceId) {
-      if (existing.runtimeId !== runtimeId) existing.session.invalidate();
-      else if (existing.running && !running) existing.session.refreshIfMounted();
-      Object.assign(existing, { runtimeId, running });
+      if (existing.runtimeId !== runtimeId) {
+        entries.set(agent.id, { ...existing, runtimeId, running });
+        existing.session.invalidate();
+      } else {
+        if (existing.running && !running) existing.session.refreshIfMounted();
+        existing.running = running;
+      }
       return;
     }
     remove(agent.id);

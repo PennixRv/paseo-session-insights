@@ -24,6 +24,22 @@ const pageSchema = z.object({ page: z.object({
 
 type Options = { baseUrl: string; token: string; apiKeyId: string };
 type Charge = { id: string; threadId: string; settled: boolean; money?: { currency: "CRED"; amount: string } };
+type StreamSample = { id: string; threadId: string; streaming: boolean; completedAt: number;
+  ttftMs?: number; tps?: number; basis?: "ttfb" | "ttft" };
+type Scan = ReturnType<typeof newScan>;
+
+function newScan(end?: string) {
+  return { end, cursor: null as string | null, finished: false, complete: false,
+    cursors: new Set<string>(), charges: new Map<string, Charge>() };
+}
+
+class GatewayError extends Error {
+  readonly state: Unavailable;
+  constructor(state: Unavailable) {
+    super(state);
+    this.state = state;
+  }
+}
 
 function readCharge(row: z.infer<typeof rowSchema>, threadId: string): Charge {
   const id = row.requestId;
@@ -65,18 +81,23 @@ async function boundedJson(response: Response): Promise<unknown> {
 
 export function createCchpReader(options: Options, fetchImpl = globalThis.fetch, clock = Date.now) {
   let retryAt = 0;
-  const costByThread = new Map<string, { expires: number; metric: Metric }>();
-  return async function read(threadId: string | null, lifetime: AbortSignal) {
-    if (!threadId) return unavailable("waiting");
+  const costByThread = new Map<string, { touchedAt: number; expires: number; metric?: Metric; scan?: Scan }>();
+  const active = new Map<string, ReturnType<typeof read>>();
+  async function read(threadId: string, lifetime: AbortSignal) {
     if (clock() < retryAt) return unavailable("rate-limited");
     if (lifetime.aborted) return unavailable("error");
     const now = clock();
-    for (const [id, cost] of costByThread) if (cost.expires <= now) costByThread.delete(id);
-    const cachedCost = costByThread.get(threadId);
-    const request = new AbortController();
-    const abort = () => request.abort();
-    lifetime.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(abort, cachedCost ? 3000 : 4500);
+    for (const [id, cost] of costByThread) if (cost.touchedAt + 300_000 <= now) costByThread.delete(id);
+    const cached = costByThread.get(threadId);
+    const scan = cached?.metric && cached.expires > now ? undefined :
+      cached?.scan ?? newScan(new Date(now).toISOString());
+    function saveCost(value: NonNullable<typeof cached>) {
+      if (!costByThread.has(threadId) && costByThread.size >= 16) {
+        const oldest = costByThread.keys().next();
+        if (!oldest.done) costByThread.delete(oldest.value);
+      }
+      costByThread.set(threadId, value);
+    }
     try {
       const endpoint = new URL(options.baseUrl);
       if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
@@ -85,86 +106,135 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
       endpoint.pathname = "/api/account/usage/logs";
       endpoint.searchParams.set("sessionId", threadId);
       endpoint.searchParams.set("apiKeyIds", options.apiKeyId);
-      endpoint.searchParams.set("limit", cachedCost ? "100" : "200");
       endpoint.searchParams.set("sort", "startedAtDesc");
-
-      const cursorHistory = new Set<string>();
-      const requests = new Map<string, { id: string; threadId: string; streaming: boolean; completedAt: number;
-        ttftMs?: number; tps?: number; basis?: "ttfb" | "ttft" }>();
-      const charges: Charge[] = [];
-      let complete = false;
-      // shortcut: bound a cost scan to 2,000 rows; use a scoped aggregate if CCHP exposes one.
-      const maxPages = cachedCost ? 3 : 10;
-      for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
-        const response = await fetchImpl(endpoint.href, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${options.token}`, Accept: "application/json" },
-          redirect: "error",
-          signal: request.signal,
-        });
-        if (!response.ok) {
-          await response.body?.cancel().catch(() => {});
-          if (response.status === 403 || response.status === 401) return unavailable("forbidden");
-          if (response.status === 429) {
-            const retryAfter = response.headers.get("retry-after");
-            const millis = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 :
-              retryAfter && Number.isFinite(Date.parse(retryAfter)) ? Date.parse(retryAfter) - clock() : 30_000;
-            retryAt = clock() + Math.max(1000, Math.min(300_000, millis));
-            return unavailable("rate-limited");
+      const requests = new Map<string, StreamSample>();
+      async function collect(scan: Scan, maxPages: number, signal: AbortSignal, sample: boolean) {
+        const url = new URL(endpoint);
+        url.searchParams.set("limit", scan.end ? "200" : "100");
+        if (scan.end) url.searchParams.set("end", scan.end);
+        for (let i = 0; i < maxPages && !scan.finished && !signal.aborted; i++) {
+          if (scan.cursor) url.searchParams.set("cursor", scan.cursor);
+          let page: z.infer<typeof pageSchema>["page"];
+          try {
+            const response = await fetchImpl(url.href, {
+              method: "GET",
+              headers: { Authorization: `Bearer ${options.token}`, Accept: "application/json" },
+              redirect: "error", signal,
+            });
+            if (!response.ok) {
+              await response.body?.cancel().catch(() => {});
+              if (response.status === 403 || response.status === 401) throw new GatewayError("forbidden");
+              if (response.status === 429) {
+                const retryAfter = response.headers.get("retry-after");
+                const millis = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 :
+                  retryAfter && Number.isFinite(Date.parse(retryAfter)) ? Date.parse(retryAfter) - clock() : 30_000;
+                retryAt = clock() + Math.max(1000, Math.min(300_000, millis));
+                throw new GatewayError("rate-limited");
+              }
+              throw new GatewayError("error");
+            }
+            page = pageSchema.parse(await boundedJson(response)).page;
+          } catch (error) {
+            if (!(error instanceof GatewayError) && signal.aborted && !lifetime.aborted) break;
+            throw error;
           }
-          return unavailable("error");
+          for (const row of page.items) {
+            if (row.apiKeyId !== options.apiKeyId || row.sessionId !== threadId ||
+              (row.clientSessionId != null && row.clientSessionId !== threadId)) throw new GatewayError("unlinked");
+            const completedAt = row.completedAt == null ? null : Date.parse(row.completedAt);
+            if (completedAt !== null && !Number.isFinite(completedAt)) throw new GatewayError("error");
+            const charge = readCharge(row, threadId);
+            const previousCharge = scan.charges.get(charge.id);
+            if (charge.settled && previousCharge?.settled && charge.money?.amount !== previousCharge.money?.amount) {
+              throw new GatewayError("error");
+            }
+            if (!previousCharge?.settled) scan.charges.set(charge.id, charge);
+            if (!sample || !row.streaming || completedAt === null) continue;
+            const reading = {
+              id: row.requestId, threadId, completedAt, streaming: true,
+              ttftMs: row.ttftMs ?? undefined,
+              tps: row.tpsMilli == null ? undefined : row.tpsMilli / 1000,
+              basis: row.tpsBasis ?? undefined,
+            };
+            const previous = requests.get(reading.id);
+            if (previous && JSON.stringify(previous) !== JSON.stringify(reading)) throw new GatewayError("error");
+            requests.set(reading.id, reading);
+          }
+          scan.cursor = page.nextCursor;
+          if (scan.cursor === null) {
+            scan.finished = true;
+            scan.complete = !page.totalIsLowerBound;
+          } else {
+            if (scan.cursors.has(scan.cursor)) throw new GatewayError("error");
+            scan.cursors.add(scan.cursor);
+          }
         }
-        const { page } = pageSchema.parse(await boundedJson(response));
-        for (const row of page.items) {
-          if (row.apiKeyId !== options.apiKeyId || row.sessionId !== threadId ||
-            (row.clientSessionId != null && row.clientSessionId !== threadId)) return unavailable("unlinked");
-          const completedAt = row.completedAt == null ? null : Date.parse(row.completedAt);
-          if (completedAt !== null && !Number.isFinite(completedAt)) return unavailable("error");
-          charges.push(readCharge(row, threadId));
-          if (!row.streaming || completedAt === null) continue;
-          const reading = {
-            id: row.requestId, threadId, completedAt, streaming: true,
-            ttftMs: row.ttftMs ?? undefined,
-            tps: row.tpsMilli == null ? undefined : row.tpsMilli / 1000,
-            basis: row.tpsBasis ?? undefined,
-          };
-          const previous = requests.get(reading.id);
-          if (previous && JSON.stringify(previous) !== JSON.stringify(reading)) return unavailable("error");
-          requests.set(reading.id, reading);
-        }
-        if (page.nextCursor == null) {
-          complete = !page.totalIsLowerBound;
-          break;
-        }
-        if (cursorHistory.has(page.nextCursor)) return unavailable("error");
-        cursorHistory.add(page.nextCursor);
-        endpoint.searchParams.set("cursor", page.nextCursor);
       }
+      async function withinBudget(timeout: number, read: (signal: AbortSignal) => Promise<void>) {
+        if (lifetime.aborted) throw new GatewayError("error");
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        lifetime.addEventListener("abort", cancel, { once: true });
+        const timer = setTimeout(cancel, timeout);
+        try { await read(controller.signal); }
+        finally {
+          clearTimeout(timer);
+          lifetime.removeEventListener("abort", cancel);
+        }
+      }
+      const resume = Boolean(cached?.scan);
+      const recent = !scan || resume ? newScan() : scan;
+      await withinBudget(scan && resume ? 1500 : scan ? 4500 : 3000,
+        signal => collect(recent, recent === scan ? 10 : 3, signal, true));
+      if (scan && resume) await withinBudget(3000, signal => collect(scan, 7, signal, false));
+      if (lifetime.aborted) throw new GatewayError("error");
+
       const observedAt = clock();
-      const readings = projectGateway({ complete, requests: [...requests.values()], charges }, threadId, observedAt, "cchp");
-      if (cachedCost && !complete) return { ...readings, cost: cachedCost.metric };
-      const count = new Set(charges.map(charge => charge.id)).size;
-      const settled = new Set(charges.filter(charge => charge.settled).map(charge => charge.id)).size;
-      const cost = readings.cost && {
-        ...readings.cost,
+      const readings = recent.finished || recent.cursor
+        ? projectGateway({ complete: recent.complete, requests: [...requests.values()],
+          charges: [...recent.charges.values()] }, threadId, observedAt, "cchp")
+        : unavailable("error");
+      if (!scan) {
+        if (cached) cached.touchedAt = observedAt;
+        return { ...readings, cost: cached?.metric };
+      }
+      const charges = [...scan.charges.values()];
+      const projected = scan === recent ? readings : projectGateway({ complete: scan.complete, requests: [], charges },
+        threadId, observedAt, "cchp");
+      const count = charges.length;
+      const pending = charges.filter(charge => !charge.settled).length;
+      const cost = projected.cost && {
+        ...projected.cost,
         basis: [
-          complete ? `已查询 ${count} 条请求` : `仅覆盖最近 ${count} 条请求`,
-          settled < count ? `${count - settled} 条结算待确认` : "",
+          !scan.finished ? `仍在查询，已读取 ${count} 条请求` :
+            scan.complete ? `已查询 ${count} 条请求` : `网关未确认完整覆盖，已读取 ${count} 条请求`,
+          pending ? `${pending} 条结算待确认` : "",
         ].filter(Boolean).join("，"),
       };
-      if (cost) {
-        if (!costByThread.has(threadId) && costByThread.size >= 16) {
-          const oldest = costByThread.keys().next();
-          if (!oldest.done) costByThread.delete(oldest.value);
-        }
-        costByThread.set(threadId, { expires: observedAt + 60_000, metric: cost });
-      }
-      return { ...readings, cost };
-    } catch {
-      return unavailable("error");
-    } finally {
-      clearTimeout(timer);
-      lifetime.removeEventListener("abort", abort);
+      saveCost({
+        touchedAt: observedAt, expires: scan.finished ? observedAt + 60_000 : 0,
+        metric: scan.finished ? cost : cached?.metric, scan: scan.finished ? undefined : scan,
+      });
+      const last = cached?.metric;
+      return { ...readings, cost: !scan.finished && last && "value" in last && cost
+        ? { ...last, state: "stale" as const, basis: `显示上次结算值，本次已读取 ${count} 条请求` }
+        : cost };
+    } catch (error) {
+      const state = error instanceof GatewayError ? error.state : "error";
+      if (state === "rate-limited" && scan?.cursor) {
+        saveCost({ touchedAt: clock(), expires: 0, scan });
+      } else costByThread.delete(threadId);
+      return unavailable(state);
     }
+  }
+  return async (threadId: string | null, lifetime: AbortSignal) => {
+    if (!threadId) return unavailable("waiting");
+    if (lifetime.aborted) return unavailable("error");
+    let pending = active.get(threadId);
+    if (!pending) {
+      pending = read(threadId, lifetime).finally(() => active.delete(threadId));
+      active.set(threadId, pending);
+    }
+    return await pending;
   };
 }

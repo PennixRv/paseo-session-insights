@@ -50,7 +50,7 @@ const ledger = z.object({
     threadId: z.string().min(1),
     settled: z.boolean(),
     money: moneySchema.optional(),
-  })).max(2000),
+  })),
 });
 
 function units(amount: string): bigint {

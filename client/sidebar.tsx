@@ -14,20 +14,22 @@ const shortLabels = {
 } satisfies Record<MetricId, string>;
 
 export function SidebarMetrics({
-  theme, layout, session, title,
-}: Pick<PluginSidebarItemProps, "theme" | "layout"> & { session: InsightSession; title: string | null }) {
+  theme, layout, session, title, codexSessionId,
+}: Pick<PluginSidebarItemProps, "theme" | "layout"> & {
+  session: InsightSession; title: string | null; codexSessionId: string | null;
+}) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const [open, setOpen] = useState(false);
   const { foreground, foregroundMuted } = theme.colors;
-  const fontIncrease = layout.platform === "android" || layout.platform === "ios" ? 2 : 0;
-  const labelSize = fontIncrease ? 14 : 11;
+  const metricSize = 14;
   const columnGap = layout.compact ? 24 : 16;
   useRefreshWhileVisible(session);
   const status = [
     snapshot.fixture ? "演示数据" : "",
     ...detailGroups.flatMap(group => group.ids).flatMap(id => {
       const reading = snapshot.metrics[id];
-      if (reading.state === "partial" && id !== "cost") return [`${shortLabels[id]}：${reading.basis ?? "覆盖不完整"}`];
+      if (id === "cost") return [];
+      if (reading.state === "partial") return [`${shortLabels[id]}：${reading.basis ?? "覆盖不完整"}`];
       if (reading.state === "stale") return [`${shortLabels[id]}：已过期`];
       return [];
     }),
@@ -40,8 +42,8 @@ export function SidebarMetrics({
       <View key={id} testID={`insights-sidebar-metric-${id}`} accessible
         accessibilityLabel={[labels[id], value, stateLabels[reading.state], reading.basis].filter(Boolean).join("，")}
         style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 5 }}>
-        <Text style={{ color: foregroundMuted, fontSize: labelSize, flexShrink: 1 }}>{shortLabels[id]}</Text>
-        <Text style={{ color: foreground, fontSize: 12 + fontIncrease, fontVariant: ["tabular-nums"] }}>{value}</Text>
+        <Text style={{ color: foregroundMuted, fontSize: metricSize, flexShrink: 1 }}>{shortLabels[id]}</Text>
+        <Text style={{ color: foreground, fontSize: metricSize, fontVariant: ["tabular-nums"] }}>{value}</Text>
       </View>
     );
   };
@@ -50,11 +52,11 @@ export function SidebarMetrics({
   return (
     <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 13 + fontIncrease }}>会话指标</Text>
-        <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 11 + fontIncrease }}>{title}</Text>
+        <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 15 }}>会话指标</Text>
+        <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 13 }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
           style={{ minHeight: layout.compact ? 44 : 24, paddingHorizontal: 4, justifyContent: "center" }}>
-          <Text style={{ color: foregroundMuted, fontSize: 11 + fontIncrease }}>详情</Text>
+          <Text style={{ color: foregroundMuted, fontSize: 13 }}>详情</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -68,16 +70,16 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", gap: columnGap }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text accessibilityRole="header" style={{ color: foregroundMuted, fontSize: labelSize, fontWeight: "600" }}>
+            <Text accessibilityRole="header" style={{ color: foregroundMuted, fontSize: metricSize, fontWeight: "600" }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>
             {group.ids.map(renderMetric)}
           </View>
         ))}
       </View>
-      {!!status && <Text style={{ color: foregroundMuted, fontSize: 10 + fontIncrease }}>{status}</Text>}
+      {!!status && <Text style={{ color: foregroundMuted, fontSize: 12 }}>{status}</Text>}
       {open && <Modal title="会话指标" open onOpenChange={setOpen}>
-        <Modal.Content><Details session={session} theme={theme} layout={layout} /></Modal.Content>
+        <Modal.Content><Details session={session} theme={theme} layout={layout} codexSessionId={codexSessionId} /></Modal.Content>
       </Modal>}
     </View>
   );
