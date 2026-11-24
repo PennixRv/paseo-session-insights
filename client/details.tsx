@@ -1,10 +1,9 @@
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
-import { Icon } from "@getpaseo/plugin/client/ui";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AppState, Platform, Pressable, Text, View, useWindowDimensions } from "react-native";
 import { formatMetric, stateLabels } from "../shared/format.ts";
 import { detailGroups, labels, type Metric, type MetricSource } from "../shared/metrics.ts";
-import { fieldIcons } from "./icons.ts";
+import { fieldGlyphs } from "./glyphs.ts";
 import type { InsightSession } from "./session.ts";
 
 const sourceLabels: Record<MetricSource, string> = {
@@ -81,7 +80,7 @@ export function Details({
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
                       {!mobile && (
                         <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                          <Icon icon={fieldIcons[id]} size={14} color={colors.foregroundMuted} />
+                          <Text style={{ fontSize: 14, color: colors.foregroundMuted }}>{fieldGlyphs[id]}</Text>
                         </View>
                       )}
                       <Text style={{ color: colors.foregroundMuted, flexShrink: 1 }}>{labels[id]}</Text>

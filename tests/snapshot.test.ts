@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findSvgIconProblem } from "@getpaseo/plugin";
-import { fieldIcons } from "../client/icons.ts";
+import { fieldGlyphs } from "../client/glyphs.ts";
 import { createSession } from "../client/session.ts";
 import { fixtureSnapshot } from "../server/fixture.ts";
 import { createSnapshotHandler, type Subject } from "../server/snapshot.ts";
@@ -20,9 +19,10 @@ test("both surfaces keep the same 14 metrics, legacy icon shapes, units and grou
   assert.deepEqual(summaryGroups.flatMap(group => [...group.ids]), [...metricIds]);
   assert.deepEqual(formatSummary(fixture).map(group => group.label),
     ["25.9M/1.34M†", "87%·12·4.28$", "1.2s·46t/s", "3/1/12", "2/1/0/1"]);
-  assert.deepEqual(Object.keys(fieldIcons), [...metricIds]);
-  assert.equal(new Set(Object.values(fieldIcons)).size, 11);
-  for (const { svg } of Object.values(fieldIcons)) assert.equal(findSvgIconProblem(svg), null);
+  assert.deepEqual(Object.keys(fieldGlyphs), [...metricIds]);
+  assert.deepEqual(Object.values(fieldGlyphs).map(glyph => glyph.codePointAt(0)),
+    [0xF021A, 0xF021A, 0xF0CFF, 0xF1B8, 0xF0584, 0xEF0C, 0xF04C5, 0xF0EA6, 0xF0EA6, 0xF0EA6,
+      0xF01D, 0xF192, 0xF29C, 0xF05D]);
   assert.equal(formatMetric("input", fixture.metrics.input), "25.90M");
   assert.equal(formatMetric("cache", fixture.metrics.cache), "87.00%");
   assert.equal(formatMetric("cost", fixture.metrics.cost), "4.28 USD");

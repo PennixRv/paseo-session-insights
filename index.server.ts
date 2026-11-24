@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { emptySnapshot, insightsRpc } from "./shared/metrics.ts";
-import { createCchpReader } from "./server/cchp.ts";
+import { createLifecycleCchpReader } from "./server/lifecycle-cchp.ts";
 import { readCodex } from "./server/codex.ts";
 import { fixtureSnapshot } from "./server/fixture.ts";
 import { createSnapshotHandler } from "./server/snapshot.ts";
@@ -10,12 +10,7 @@ export default function contribute(server: PluginServerContext) {
   const fixture = process.env.PASEO_SESSION_INSIGHTS_FIXTURE === "1";
   const workflow = process.env.PASEO_SESSION_INSIGHTS_WORKFLOW === "1";
   const codexHome = process.env.PASEO_SESSION_INSIGHTS_CODEX_HOME;
-  const cchp = {
-    baseUrl: process.env.PASEO_SESSION_INSIGHTS_CCHP_URL ?? "",
-    token: process.env.PASEO_SESSION_INSIGHTS_CCHP_TOKEN ?? "",
-    apiKeyId: process.env.PASEO_SESSION_INSIGHTS_CCHP_KEY_ID ?? "",
-  };
-  const readCchp = cchp.baseUrl && cchp.token && cchp.apiKeyId ? createCchpReader(cchp) : null;
+  const readCchp = createLifecycleCchpReader();
   const lifetime = new AbortController();
   const progress = new Map<string, { expires: number; read: ReturnType<typeof readProgress> }>();
   const run: Parameters<typeof readProgress>[1] = (args, cwd, timeout) => runTrellis(args, cwd, timeout, lifetime.signal);
@@ -39,7 +34,7 @@ export default function contribute(server: PluginServerContext) {
     }
     const results = await Promise.all([
       codexHome && readCodex(codexHome, subject.threadId, lifetime.signal),
-      readCchp?.(subject.threadId, lifetime.signal),
+      readCchp(subject.threadId, lifetime.signal),
       workflow && subject.workspaceRoot && projectProgress(subject.workspaceRoot),
       workflow && subject.workspaceRoot && readTeamwork(subject.workspaceRoot, subject.threadId, run),
     ]);

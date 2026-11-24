@@ -1,9 +1,9 @@
 import type { PluginButtonIconProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { Icon, Modal } from "@getpaseo/plugin/client/ui";
+import { Modal } from "@getpaseo/plugin/client/ui";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Platform } from "react-native";
+import { Platform, Text } from "react-native";
 import { Details, useRefreshWhileVisible } from "./client/details.tsx";
-import { fieldIcons } from "./client/icons.ts";
+import { fieldGlyphs } from "./client/glyphs.ts";
 import { createSession } from "./client/session.ts";
 import { formatSummary } from "./shared/format.ts";
 import { insightsRpc, summaryGroups, type Target } from "./shared/metrics.ts";
@@ -19,7 +19,7 @@ function register(client: PluginClientContext, target: Target, desktop: boolean)
     useRefreshWhileVisible(session, owner === instance);
     return (
       <>
-        <Icon icon={fieldIcons.input} size={props.size} color={props.color} />
+        <Text style={{ color: props.color, fontSize: props.size, lineHeight: props.size + 2 }}>{fieldGlyphs.input}</Text>
         {open && owner === instance && (
           <Modal title="会话指标" open onOpenChange={session.setOpen}>
             <Modal.Content>
@@ -39,7 +39,9 @@ function register(client: PluginClientContext, target: Target, desktop: boolean)
         ...target, id: `insights-${group.id}`,
         button: {
           title, label,
-          icon: index === 0 ? DesktopDetailsIcon : fieldIcons[group.ids[0]],
+          icon: index === 0 ? DesktopDetailsIcon : ({ size, color }) => (
+            <Text style={{ color, fontSize: size, lineHeight: size + 2 }}>{fieldGlyphs[group.ids[0]]}</Text>
+          ),
           behavior: { kind: "action", onPress: () => session.setOpen(true) },
         },
       }));

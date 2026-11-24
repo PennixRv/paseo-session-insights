@@ -6,8 +6,33 @@ import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createCchpReader } from "../server/cchp.ts";
 import { readCodex } from "../server/codex.ts";
+import { createLifecycleCchpReader } from "../server/lifecycle-cchp.ts";
 import { projectCodex, projectGateway } from "../server/usage.ts";
 import { readProgress, readTeamwork } from "../server/workflow.ts";
+
+test("Lifecycle CCHP configuration coalesces reads and stops using a revoked token", async () => {
+  const signal = new AbortController().signal;
+  let now = 0;
+  let token: string | null = "fixture-one";
+  let reads = 0;
+  const sent: string[] = [];
+  const read = createLifecycleCchpReader(async () => {
+    reads++;
+    return token ? { baseUrl: "https://gateway.invalid", apiKeyId: "fixture-key", token } : null;
+  }, async (_url, options) => {
+    sent.push(new Headers(options?.headers).get("Authorization")!);
+    return Response.json({ page: { items: [], nextCursor: null } });
+  }, () => now);
+  await Promise.all([read("a", signal), read("b", signal)]);
+  assert.equal(reads, 1);
+  token = "fixture-two";
+  now += 15_000;
+  await read("a", signal);
+  token = null;
+  now += 15_000;
+  assert.equal(await read("a", signal), undefined);
+  assert.deepEqual(sent, ["Bearer fixture-one", "Bearer fixture-one", "Bearer fixture-two"]);
+});
 
 test("Codex counters use one exact cumulative sample and reject a wrong thread", () => {
   const record = {
