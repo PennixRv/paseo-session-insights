@@ -23,9 +23,10 @@ function metadata(reading: Metric): string {
   ].filter(Boolean).join(" · ");
 }
 
-export function useRefreshWhileVisible(session: InsightSession, enabled: boolean) {
+export function useRefreshWhileVisible(session: InsightSession, enabled = true) {
   useEffect(() => {
     if (!enabled) return;
+    const detach = session.attach();
     const refresh = () => {
       if (AppState.currentState === "active" || AppState.currentState === null) void session.refresh();
     };
@@ -35,6 +36,7 @@ export function useRefreshWhileVisible(session: InsightSession, enabled: boolean
     return () => {
       clearInterval(timer);
       subscription.remove();
+      detach();
     };
   }, [enabled, session]);
 }
@@ -42,7 +44,7 @@ export function useRefreshWhileVisible(session: InsightSession, enabled: boolean
 export function Details({
   theme, layout, session,
 }: Pick<PluginButtonContentProps, "theme" | "layout"> & { session: InsightSession }) {
-  const { snapshot } = useSyncExternalStore(session.subscribe, session.current);
+  const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const { fontScale, width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
   const mobile = Platform.OS === "ios" || Platform.OS === "android";

@@ -21,14 +21,6 @@ export const detailGroups = [
   { title: "Teamwork 协作", ids: ["working", "idle", "error", "ended"] },
 ] as const satisfies readonly { title: string; ids: readonly MetricId[] }[];
 
-export const summaryGroups = [
-  { id: "tokens", ids: ["input", "output"], separator: "/" },
-  { id: "usage", ids: ["cache", "compactions", "cost"], separator: "·" },
-  { id: "performance", ids: ["ttft", "tps"], separator: "·" },
-  { id: "trellis", ids: ["planning", "inProgress", "completed"], separator: "/" },
-  { id: "teamwork", ids: ["working", "idle", "error", "ended"], separator: "/" },
-] as const satisfies readonly { id: string; ids: readonly MetricId[]; separator: string }[];
-
 const finite = z.number().finite().nonnegative();
 const stamp = z.number().int().nonnegative();
 export const moneySchema = z.object({

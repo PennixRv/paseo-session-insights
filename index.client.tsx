@@ -1,87 +1,42 @@
-import type { PluginButtonIconProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { Modal } from "@getpaseo/plugin/client/ui";
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { Platform, Text } from "react-native";
-import { Details, useRefreshWhileVisible } from "./client/details.tsx";
-import { fieldGlyphs } from "./client/glyphs.ts";
-import { createSession } from "./client/session.ts";
-import { formatSummary } from "./shared/format.ts";
-import { insightsRpc, summaryGroups, type MetricId, type Target } from "./shared/metrics.ts";
-
-function register(client: PluginClientContext, target: Target, desktop: boolean) {
-  const session = createSession(() => client.rpc(insightsRpc, target));
-  const pills: PluginButtonRegistration[] = [];
-
-  function DesktopDetailsIcon({ field, ...props }: PluginButtonIconProps & { field: MetricId }) {
-    const [instance] = useState(() => Symbol());
-    const { open, owner } = useSyncExternalStore(session.subscribe, session.current);
-    useEffect(() => session.attach(instance), [instance]);
-    useRefreshWhileVisible(session, owner === instance);
-    return (
-      <>
-        <Text style={{ color: props.color, fontSize: props.size, lineHeight: props.size + 2 }}>{fieldGlyphs[field]}</Text>
-        {open && owner === instance && (
-          <Modal title="会话指标" open onOpenChange={session.setOpen}>
-            <Modal.Content>
-              <Details session={session} theme={props.theme} layout={props.layout} />
-            </Modal.Content>
-          </Modal>
-        )}
-      </>
-    );
-  }
-
-  if (desktop) {
-    const groups = formatSummary(session.current().snapshot);
-    for (const [index, group] of summaryGroups.entries()) {
-      const { label, title } = groups[index];
-      pills.push(client.addComposerPill({
-        ...target, id: `insights-${group.id}`,
-        button: {
-          title, label,
-          // Paseo temporarily replaces the pressed action's icon with a spinner.
-          icon: index < 2 ? props => <DesktopDetailsIcon {...props} field={group.ids[0]} /> : props => (
-            <Text style={{ color: props.color, fontSize: props.size, lineHeight: props.size + 2 }}>{fieldGlyphs[group.ids[0]]}</Text>
-          ),
-          behavior: { kind: "action", onPress: () => session.setOpen(true) },
-        },
-      }));
-    }
-  } else {
-    pills.push(client.addComposerPill({
-      ...target, id: "session-insights",
-      button: {
-        title: "会话指标", icon: "ChartNoAxesColumnIncreasing",
-        behavior: { kind: "popover", Content: props => (
-          <Details theme={props.theme} layout={props.layout} session={session} />
-        ) },
-      },
-    }));
-  }
-
-  let previous = session.current().snapshot;
-  const unsubscribe = session.subscribe(() => {
-    if (!desktop || session.current().snapshot === previous) return;
-    previous = session.current().snapshot;
-    formatSummary(previous).forEach(({ label, title }, index) => pills[index].update({ label, title }));
-  });
-  return {
-    refresh: session.refreshIfMounted,
-    invalidate: session.invalidate,
-    remove() {
-      unsubscribe();
-      session.dispose();
-      for (const pill of pills) pill.remove();
-    },
-  };
-}
+import { useAgent, useComposers, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { useSyncExternalStore } from "react";
+import { Platform } from "react-native";
+import { Details } from "./client/details.tsx";
+import { findFocusedAgent } from "./client/focus.ts";
+import { createSession, type InsightSession } from "./client/session.ts";
+import { SidebarMetrics } from "./client/sidebar.tsx";
+import { insightsRpc, type Target } from "./shared/metrics.ts";
 
 export default function contribute(client: PluginClientContext) {
   const lifetime = new AbortController();
   const desktop = Platform.OS !== "ios" && Platform.OS !== "android";
-  const entries = new Map<string, ReturnType<typeof register> & {
-    workspaceId: string; runtimeId: string | null; running: boolean;
+  const entries = new Map<string, Target & {
+    session: InsightSession; runtimeId: string | null; running: boolean; remove(): void;
   }>();
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  };
+  const notify = () => { for (const listener of listeners) listener(); };
+
+  function Footer(props: PluginSidebarItemProps) {
+    const [focused] = useComposers({ focused: true });
+    const entry = useSyncExternalStore(subscribe, () => {
+      if (props.layout.compact || !focused) return null;
+      const id = findFocusedAgent(client.composers, entries.keys());
+      return id === null ? null : entries.get(id) ?? null;
+    });
+    const agent = useAgent(entry?.agentId ?? "");
+    if (!entry || !agent || agent.hostId !== props.host.id || agent.workspaceId !== entry.workspaceId) return null;
+    return <SidebarMetrics key={agent.ref.key} {...props} title={agent.title} session={entry.session} />;
+  }
+
+  const unregisterFooter = desktop ? client.addSidebarFooterItem({
+    id: "session-insights",
+    title: "会话指标",
+    Component: Footer,
+  }) : null;
   const remove = (id: string) => {
     entries.get(id)?.remove();
     entries.delete(id);
@@ -99,15 +54,31 @@ export default function contribute(client: PluginClientContext) {
     const running = agent.status === "running";
     const existing = entries.get(agent.id);
     if (existing?.workspaceId === agent.workspaceId) {
-      if (existing.runtimeId !== runtimeId) existing.invalidate();
-      else if (existing.running && !running && desktop) void existing.refresh();
+      if (existing.runtimeId !== runtimeId) existing.session.invalidate();
+      else if (existing.running && !running && desktop) existing.session.refreshIfMounted();
       Object.assign(existing, { runtimeId, running });
       return;
     }
     remove(agent.id);
+    const target = { workspaceId: agent.workspaceId, agentId: agent.id };
+    const session = createSession(() => client.rpc(insightsRpc, target));
+    const pill = desktop ? null : client.addComposerPill({
+      ...target,
+      id: "session-insights",
+      button: {
+        title: "会话指标",
+        icon: "ChartNoAxesColumnIncreasing",
+        behavior: { kind: "popover", Content: props => (
+          <Details theme={props.theme} layout={props.layout} session={session} />
+        ) },
+      },
+    });
     entries.set(agent.id, {
-      ...register(client, { workspaceId: agent.workspaceId, agentId: agent.id }, desktop),
-      workspaceId: agent.workspaceId, runtimeId, running,
+      ...target, session, runtimeId, running,
+      remove() {
+        session.dispose();
+        pill?.remove();
+      },
     });
   };
 
@@ -115,14 +86,18 @@ export default function contribute(client: PluginClientContext) {
     if (lifetime.signal.aborted) return;
     subscription.subscribe({
       snapshot: ({ entries: snapshot }) => {
-        for (const id of entries.keys()) remove(id);
+        if (lifetime.signal.aborted) return;
+        const ids = new Set(snapshot.map(({ agent }) => agent.id));
+        for (const id of entries.keys()) if (!ids.has(id)) remove(id);
         for (const { agent } of snapshot) upsert(agent);
+        notify();
       },
       update: message => {
-        if (message.type !== "agent_update") return;
+        if (lifetime.signal.aborted || message.type !== "agent_update") return;
         const update = message.payload;
         if (update.kind === "upsert") upsert(update.agent);
         else remove(update.agentId);
+        notify();
       },
     });
   }).catch(() => {
@@ -130,6 +105,9 @@ export default function contribute(client: PluginClientContext) {
   });
   return () => {
     lifetime.abort();
+    unregisterFooter?.();
     for (const id of entries.keys()) remove(id);
+    notify();
+    listeners.clear();
   };
 }

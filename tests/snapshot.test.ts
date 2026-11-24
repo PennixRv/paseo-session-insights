@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fieldGlyphs } from "../client/glyphs.ts";
+import { findFocusedAgent } from "../client/focus.ts";
 import { createSession } from "../client/session.ts";
 import { fixtureSnapshot } from "../server/fixture.ts";
 import { createSnapshotHandler, type Subject } from "../server/snapshot.ts";
-import { formatMetric, formatSummary } from "../shared/format.ts";
-import { detailGroups, emptySnapshot, metricIds, snapshotSchema, summaryGroups, targetSchema } from "../shared/metrics.ts";
+import { formatMetric, formatSidebarMetric } from "../shared/format.ts";
+import { detailGroups, emptySnapshot, metricIds, snapshotSchema, targetSchema } from "../shared/metrics.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -16,11 +17,10 @@ function deferred<T>() {
 test("both surfaces keep the same 14 metrics, legacy icon shapes, units and groups", () => {
   const fixture = snapshotSchema.parse(fixtureSnapshot(100));
   assert.deepEqual(detailGroups.flatMap(group => [...group.ids]), [...metricIds]);
-  assert.deepEqual(summaryGroups.flatMap(group => [...group.ids]), [...metricIds]);
-  assert.deepEqual(formatSummary(fixture).map(group => group.label),
-    ["25.9M/1.34M†", "87%·12·4.28$", "1.2s·46t/s", "3/1/12", "2/1/0/1"]);
-  const partial = { ...fixture, fixture: false, metrics: { ...fixture.metrics, input: { state: "partial" as const, value: 25_900_000 } } };
-  assert.equal(formatSummary(partial)[0].title, "输入／输出 25.9M/1.34M，部分覆盖");
+  assert.deepEqual(metricIds.map(id => formatSidebarMetric(id, fixture.metrics[id])),
+    ["25.9M", "1.34M", "87%", "12", "4.28$", "1.2s", "46t/s", "3", "1", "12", "2", "1", "0", "1"]);
+  assert.equal(formatSidebarMetric("input", { state: "partial", value: 25_900_000 }), "25.9M*");
+  assert.equal(formatSidebarMetric("input", { state: "stale", value: 25_900_000 }), "25.9M~");
   assert.deepEqual(Object.keys(fieldGlyphs), [...metricIds]);
   assert.deepEqual(Object.values(fieldGlyphs).map(glyph => glyph.codePointAt(0)),
     [0xF021A, 0xF021A, 0xF0CFF, 0xF1B8, 0xF0584, 0xEF0C, 0xF04C5, 0xF0EA6, 0xF0EA6, 0xF0EA6,
@@ -55,33 +55,48 @@ test("desktop requests share one fetch and reject old thread responses after inv
   const pending = [first, second];
   let calls = 0;
   const session = createSession(() => pending[calls++].promise);
-  const owner = Symbol();
-  const unmountOwner = session.attach(owner);
-  assert.equal(session.current().owner, owner);
+  const detach = session.attach();
   const a = session.refresh();
   const b = session.refresh();
   assert.equal(a, b);
   await Promise.resolve();
-  session.setOpen(true);
   session.invalidate();
-  assert.equal(session.current().open, false);
   const next = session.refresh();
   first.resolve(fixtureSnapshot(1));
   await a;
-  assert.equal(session.current().snapshot.metrics.input.state, "loading");
+  assert.equal(session.current().metrics.input.state, "loading");
   second.resolve(fixtureSnapshot(2));
   await next;
-  assert.equal(session.current().snapshot.metrics.input.observedAt, 2);
+  assert.equal(session.current().metrics.input.observedAt, 2);
   assert.equal(calls, 2);
-  const alternate = Symbol();
-  const unmountAlternate = session.attach(alternate);
-  session.setOpen(true);
-  unmountOwner();
-  assert.equal(session.current().owner, alternate);
-  assert.equal(session.current().open, true);
-  unmountAlternate();
-  assert.equal(session.current().open, false);
+  detach();
+  session.invalidate();
+  await Promise.resolve();
+  assert.equal(calls, 2);
   session.dispose();
+});
+
+test("left sidebar follows a unique focused handle and hides unmatched or ambiguous readings", () => {
+  type Composers = Parameters<typeof findFocusedAgent>[0];
+  type Handle = ReturnType<Composers>[number];
+  const a = { context: "agent" } as Handle;
+  const b = { ...a };
+  const handles = new Map([["a", a], ["b", b]]);
+  let focused: Handle | undefined;
+  const composers: Composers = selector => {
+    const handle = "focused" in selector ? focused : handles.get(selector.agentId);
+    return handle ? [handle] : [];
+  };
+  assert.equal(findFocusedAgent(composers, handles.keys()), null);
+  focused = a;
+  assert.equal(findFocusedAgent(composers, handles.keys()), "a");
+  focused = b;
+  assert.equal(findFocusedAgent(composers, handles.keys()), "b");
+  focused = { ...b };
+  assert.equal(findFocusedAgent(composers, handles.keys()), null);
+  focused = a;
+  handles.set("b", a);
+  assert.equal(findFocusedAgent(composers, handles.keys()), null);
 });
 
 test("daemon coalesces the same subject and discards an in-flight result after a fork", async () => {

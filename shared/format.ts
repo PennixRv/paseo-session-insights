@@ -1,4 +1,4 @@
-import { summaryGroups, type Metric, type MetricId, type Snapshot } from "./metrics.ts";
+import type { Metric, MetricId } from "./metrics.ts";
 
 export const stateLabels: Record<Metric["state"], string> = {
   loading: "正在读取", waiting: "等待记录", "no-records": "暂无记录", unsupported: "来源未接入",
@@ -45,23 +45,7 @@ export function formatMetric(id: MetricId, metric: Metric, summary = false): str
   return summary ? compact(value) : String(value);
 }
 
-export function formatSummary(snapshot: Snapshot) {
-  const names = {
-    tokens: "输入／输出",
-    usage: "缓存／压缩／费用",
-    performance: "首 token／速率",
-    trellis: "Trellis 进度",
-    teamwork: "Teamwork 状态",
-  };
-  return summaryGroups.map(group => {
-    const readings = group.ids.map(id => snapshot.metrics[id]);
-    const partial = readings.some(m => m.state === "partial");
-    const stale = readings.some(m => m.state === "stale");
-    const values = group.ids.map(id => formatMetric(id, snapshot.metrics[id], true)).join(group.separator);
-    return {
-      id: group.id,
-      label: `${values}${partial ? "*" : ""}${stale ? "~" : ""}${snapshot.fixture && group.id === "tokens" ? "†" : ""}`,
-      title: `${snapshot.fixture ? "演示 " : ""}${names[group.id]} ${values}${partial ? "，部分覆盖" : ""}${stale ? "，已过期" : ""}`,
-    };
-  });
+export function formatSidebarMetric(id: MetricId, reading: Metric) {
+  const value = formatMetric(id, reading, true);
+  return reading.state === "partial" ? `${value}*` : reading.state === "stale" ? `${value}~` : value;
 }
