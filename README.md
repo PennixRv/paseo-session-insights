@@ -4,7 +4,7 @@
 
 ## 本地验证
 
-使用 Node.js 24 和 Paseo 0.17.3 运行验证。
+使用 Node.js 24 和 Paseo 0.17.2 或更高版本运行验证。
 
 ```bash
 npm ci
