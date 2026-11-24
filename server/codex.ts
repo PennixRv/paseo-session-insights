@@ -8,7 +8,8 @@ const ids = ["input", "output", "cache", "compactions"] as const;
 const headerBudget = 64 * 1024;
 const tailBudget = 2 * 1024 * 1024;
 const metadataBudget = 32 * 1024;
-const rolloutPrefix = /^\{"timestamp":"[^"\\]{1,80}","type":"([a-z_]+)","payload":/;
+const rolloutPrefix = /^\{"timestamp":"[^"\\]{1,80}",(?:"ordinal":\d+,)?"type":"([a-z_]+)","payload":/;
+const sessionIdentity = /^\{(?:"(?:account_scoped|creator_user_id|creator_account_id)":(?:true|false|null|"[^"\\]{0,128}"),)*"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})"(?:(?:,"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})")|(?=,|}))/;
 type Projection = Partial<Record<MetricId, Metric>>;
 
 function unavailable(state: Unavailable): Projection {
@@ -75,9 +76,10 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
       const head = await file.read(header, 0, header.length, 0);
       const newline = header.subarray(0, head.bytesRead).indexOf(10);
       if (newline < 0) return unavailable("waiting");
-      const first = header.subarray(0, Math.min(newline, 256)).toString("utf8");
-      const id = /^\{"timestamp":"[^"\\]{1,80}","type":"session_meta","payload":\{"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})"/.exec(first);
-      if (id?.[1] !== threadId) return unavailable("unlinked");
+      const first = header.subarray(0, Math.min(newline, 768)).toString("utf8");
+      const meta = rolloutPrefix.exec(first);
+      const id = meta?.[1] === "session_meta" ? sessionIdentity.exec(first.slice(meta[0].length)) : null;
+      if (id?.[1] !== threadId || (id[2] !== undefined && id[2] !== threadId)) return unavailable("unlinked");
 
       if (signal.aborted) return unavailable("error");
       // shortcut: bounded tail without a persisted cursor, widen only after measuring long-session coverage.

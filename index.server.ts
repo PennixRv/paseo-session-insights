@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { emptySnapshot, insightsRpc } from "./shared/metrics.ts";
-import { createLifecycleCchpReader } from "./server/lifecycle-cchp.ts";
+import { createLifecycleCchpReader, createLifecycleLocalReader } from "./server/lifecycle-cchp.ts";
 import { readCodex } from "./server/codex.ts";
 import { fixtureSnapshot } from "./server/fixture.ts";
 import { createSnapshotHandler } from "./server/snapshot.ts";
@@ -8,9 +8,9 @@ import { readProgress, readTeamwork, runTrellis } from "./server/workflow.ts";
 
 export default function contribute(server: PluginServerContext) {
   const fixture = process.env.PASEO_SESSION_INSIGHTS_FIXTURE === "1";
-  const workflow = process.env.PASEO_SESSION_INSIGHTS_WORKFLOW === "1";
-  const codexHome = process.env.PASEO_SESSION_INSIGHTS_CODEX_HOME;
+  const workflow = process.env.PASEO_SESSION_INSIGHTS_WORKFLOW;
   const readCchp = createLifecycleCchpReader();
+  const readLocal = createLifecycleLocalReader();
   const lifetime = new AbortController();
   const progress = new Map<string, { expires: number; read: ReturnType<typeof readProgress> }>();
   const run: Parameters<typeof readProgress>[1] = (args, cwd, timeout) => runTrellis(args, cwd, timeout, lifetime.signal);
@@ -32,11 +32,15 @@ export default function contribute(server: PluginServerContext) {
         snapshot.metrics[id] = { state: "waiting" };
       }
     }
+    const gateway = readCchp(subject.threadId, lifetime.signal);
+    const local = await readLocal(lifetime.signal);
+    const codexHome = process.env.PASEO_SESSION_INSIGHTS_CODEX_HOME ?? local?.codexHome;
+    const readWorkflow = workflow === undefined ? Boolean(local) : workflow === "1";
     const results = await Promise.all([
       codexHome && readCodex(codexHome, subject.threadId, lifetime.signal),
-      readCchp(subject.threadId, lifetime.signal),
-      workflow && subject.workspaceRoot && projectProgress(subject.workspaceRoot),
-      workflow && subject.workspaceRoot && readTeamwork(subject.workspaceRoot, subject.threadId, run),
+      gateway,
+      readWorkflow && subject.workspaceRoot && projectProgress(subject.workspaceRoot),
+      readWorkflow && subject.workspaceRoot && readTeamwork(subject.workspaceRoot, subject.threadId, run),
     ]);
     for (const projection of results) if (projection) Object.assign(snapshot.metrics, projection);
     return snapshot;

@@ -21,10 +21,12 @@ npm pack --dry-run
 
 ## 配置数据来源
 
+由 Pennix Lifecycle 管理的 Paseo daemon 会使用 `workflow.config` 指定的 Codex 数据根，并从当前会话所属工作区读取 Trellis 和 Teamwork 状态。独立安装或需要覆盖默认值时，使用以下变量。
+
 | 变量 | 用途 |
 | --- | --- |
 | `PASEO_SESSION_INSIGHTS_CODEX_HOME` | 目标 Codex 数据根的绝对路径。按线程 ID 读取 `state_5.sqlite` 中的会话路径，再投影 `sessions` 目录内对应记录中的结构化用量和压缩元数据。 |
-| `PASEO_SESSION_INSIGHTS_WORKFLOW` | 设为 `1` 后使用该 daemon 的 `trellis` CLI 获取工作区任务和当前会话成员状态。 |
+| `PASEO_SESSION_INSIGHTS_WORKFLOW` | 设为 `1` 启用本地 Trellis 读取，设为 `0` 关闭。 |
 | `PASEO_SESSION_INSIGHTS_LIFECYCLE_CONFIG` | Lifecycle 使用非默认 `workflow.config` 时，设为该配置的绝对路径。 |
 
 CCHP 读取需要包含本插件接入的 Pennix Lifecycle 版本。使用 `pennix config edit` 在 Paseo 配置中启用会话指标 CCHP 取数，填写控制面 HTTPS 地址及该 Codex 推理密钥的 ID。运行 `pennix secrets edit`，在 `[cchp]` 下写入组织范围内具有 `usage:read` 的 `usage_token`。默认秘密文件为 `~/.config/pennix/secrets.toml`。运行 `pennix secrets check` 核对字段完整性。插件服务端通过 Lifecycle 私有管道读取配置和令牌，同一 daemon 的客户端共享指标结果。

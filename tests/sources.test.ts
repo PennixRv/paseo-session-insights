@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createCchpReader } from "../server/cchp.ts";
 import { readCodex } from "../server/codex.ts";
-import { createLifecycleCchpReader } from "../server/lifecycle-cchp.ts";
+import { createLifecycleCchpReader, projectLifecycleLocalSources } from "../server/lifecycle-cchp.ts";
 import { projectCodex, projectGateway } from "../server/usage.ts";
 import { readProgress, readTeamwork } from "../server/workflow.ts";
 
@@ -32,6 +32,20 @@ test("Lifecycle CCHP configuration coalesces reads and stops using a revoked tok
   now += 15_000;
   assert.equal(await read("a", signal), undefined);
   assert.deepEqual(sent, ["Bearer fixture-one", "Bearer fixture-one", "Bearer fixture-two"]);
+});
+
+test("Lifecycle local sources require the configured daemon home and plug-in profile", () => {
+  const values = {
+    PENNIX_COMPONENT_PASEO_CLI: "y",
+    PENNIX_PASEO_HOME: "$HOME/.paseo",
+    PENNIX_PASEO_PLUGIN_PROFILE: "$HOME/pennix/profile.json",
+    PENNIX_CODEX_HOME: "$HOME/.codex",
+  };
+  const home = join(homedir(), ".paseo");
+  assert.deepEqual(projectLifecycleLocalSources({ values }, home), { codexHome: join(homedir(), ".codex") });
+  assert.equal(projectLifecycleLocalSources({ values }, "/other"), undefined);
+  assert.equal(projectLifecycleLocalSources({ values: { ...values, PENNIX_PASEO_PLUGIN_PROFILE: "" } }, home), undefined);
+  assert.equal(projectLifecycleLocalSources({ values: { ...values, PENNIX_CODEX_HOME: "$HOME/../other" } }, home), undefined);
 });
 
 test("Codex counters use one exact cumulative sample and reject a wrong thread", () => {
@@ -64,7 +78,7 @@ test("gateway selects one request and sums cleared amounts exactly once", () => 
       { id: "pending", threadId, settled: false }],
   };
   const projection = projectGateway(ledger, threadId, 100, "cchp");
-  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, basis: undefined, state: "ready", value: 6 });
+  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, state: "ready", value: 6 });
   assert.equal(projection.tps?.state, "no-records");
   assert.deepEqual(projection.cost, { source: "cchp", observedAt: 100, state: "partial", value: [{ currency: "USD", amount: "0.3" }] });
   assert.throws(() => projectGateway(ledger, "another", 100, "cchp"), /thread mismatch/);
@@ -148,6 +162,16 @@ test("Codex adapter follows only the indexed thread and projects known metadata"
     assert.equal((await readCodex(home, "outside", signal)).input?.state, "forbidden");
     await writeFile(indexed, `${contents.join("\n")}\n${event("event_msg", { type: "thread_rolled_back" })}\n`);
     assert.equal((await readCodex(home, "thread-a", signal)).compactions?.state, "no-records");
+    const scopedContents = [
+      event("session_meta", { account_scoped: true, creator_user_id: "fixture", creator_account_id: "fixture",
+        session_id: "thread-a", id: "thread-a", base_instructions: "test-only system text" }),
+      ...contents.slice(1),
+    ].map((line, ordinal) => line.replace(',"type":', `,"ordinal":${ordinal},"type":`));
+    await writeFile(indexed, `${scopedContents.join("\n")}\n`);
+    assert.deepEqual(Object.values(await readCodex(home, "thread-a", signal)).map(value =>
+      "value" in value ? value.value : value.state), [100, 30, 40, 2]);
+    await writeFile(indexed, `${scopedContents.join("\n").replace('"id":"thread-a"', '"id":"thread-b"')}\n`);
+    assert.equal((await readCodex(home, "thread-a", signal)).input?.state, "unlinked");
   } finally { await rm(home, { recursive: true }); }
 });
 

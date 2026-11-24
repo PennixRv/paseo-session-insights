@@ -59,7 +59,7 @@ export function projectGateway(raw: unknown, threadId: string, observedAt: numbe
   const latest = data.requests.filter(row => row.streaming).sort((a, b) =>
     b.completedAt - a.completedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   )[0];
-  const requestInfo = { source, observedAt, sampleAt: latest?.completedAt, basis: latest?.basis };
+  const requestInfo = { source, observedAt, sampleAt: latest?.completedAt };
   const perfState = data.complete ? "ready" : "partial";
   const totals = new Map<string, bigint>();
   const seen = new Map<string, string>();
@@ -86,7 +86,7 @@ export function projectGateway(raw: unknown, threadId: string, observedAt: numbe
     ttft: latest?.ttftMs === undefined ? { ...requestInfo, state: "no-records" } :
       { ...requestInfo, state: perfState, value: latest.ttftMs },
     tps: latest?.tps === undefined || !latest.basis ? { ...requestInfo, state: "no-records" } :
-      { ...requestInfo, state: perfState, value: latest.tps },
+      { ...requestInfo, basis: latest.basis, state: perfState, value: latest.tps },
     cost: list.length ? { ...common, state: data.complete && !pending ? "ready" : "partial", value: list } :
       { ...common, state: pending ? "waiting" : "no-records" },
   };
