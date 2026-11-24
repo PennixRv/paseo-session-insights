@@ -32,7 +32,7 @@ export const summaryGroups = [
 const finite = z.number().finite().nonnegative();
 const stamp = z.number().int().nonnegative();
 export const moneySchema = z.object({
-  currency: z.string().regex(/^[A-Z]{3}$/),
+  currency: z.string().regex(/^(?:[A-Z]{3}|CRED)$/),
   amount: z.string().regex(/^(?:0|[1-9]\d{0,17})(?:\.\d{1,12})?$/),
 });
 const sources = z.enum(["codex", "cchp", "sub2api", "trellis", "teamwork", "fixture"]);

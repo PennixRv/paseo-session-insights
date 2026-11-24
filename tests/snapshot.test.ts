@@ -33,6 +33,11 @@ test("formatter distinguishes missing, tiny values and zero", () => {
   assert.equal(formatMetric("working", { state: "waiting" }, true), "—");
   assert.equal(formatMetric("working", { state: "ready", value: 0 }, true), "0");
   assert.equal(formatMetric("cost", { state: "ready", value: [{ currency: "USD", amount: "0.00001" }] }, true), "<0.01$");
+  const credits = emptySnapshot("waiting");
+  credits.metrics.cost = { state: "partial", value: [{ currency: "CRED", amount: "0.5000000014" }] };
+  assert.equal(snapshotSchema.safeParse(credits).success, true);
+  assert.equal(formatMetric("cost", credits.metrics.cost, true), "0.50 CRED");
+  assert.equal(formatMetric("cost", credits.metrics.cost), "0.5000000014 CRED");
   assert.equal(formatMetric("cache", { state: "ready", value: 99.999 }, true), ">99.99%");
   assert.equal(formatMetric("input", { state: "ready", value: 50 }, true), "<.01M");
   assert.equal(formatMetric("cost", { state: "partial", value: [{ currency: "USD", amount: "1.23" }, { currency: "EUR", amount: "2" }] }, true), "多币种");

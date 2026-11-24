@@ -180,7 +180,7 @@ test("CCHP adapter queries exact thread and key and rejects other rows", async (
   const opts = { baseUrl: "https://gateway.invalid/", token: "fixture-key", apiKeyId: "key1" };
   const old = {
     requestId: "old", sessionId: "thread", apiKeyId: "key1", completedAt: "2026-11-24T02:00:00Z",
-    streaming: true, ttftMs: 400, tpsMilli: 42000, tpsBasis: "ttft",
+    streaming: true, ttftMs: 400, tpsMilli: 42000, tpsBasis: "ttft", costUnits: 5000000001, adjustedCostUnits: null,
   };
   let calls = 0;
   const read = createCchpReader(opts, async (input, init) => {
@@ -192,15 +192,18 @@ test("CCHP adapter queries exact thread and key and rejects other rows", async (
     assert.equal(init?.method, "GET");
     assert.equal(init?.redirect, "error");
     const latest = { ...old, requestId: "latest", completedAt: "2026-11-24T02:01:00Z",
-      ttftMs: 1234, tpsMilli: null };
+      ttftMs: 1234, tpsMilli: null, adjustedCostUnits: 3 };
+    const nonstream = { ...old, requestId: "nonstream", streaming: false, costUnits: 10 };
+    const pending = { ...old, requestId: "pending", completedAt: null };
     return Response.json({ page: url.searchParams.has("cursor") ?
-      { items: [latest], nextCursor: null } : { items: [old], nextCursor: "next" } });
+      { items: [latest, old, nonstream, pending], nextCursor: null } : { items: [old], nextCursor: "next" } });
   });
   const reading = await read("thread", signal);
   assert.equal(calls, 2);
   assert.equal("value" in reading.ttft! && reading.ttft.value, 1234);
   assert.equal(reading.tps?.state, "no-records");
-  assert.equal(reading.cost?.state, "unsupported");
+  assert.equal(reading.cost?.state, "partial");
+  assert.deepEqual("value" in reading.cost! && reading.cost.value, [{ currency: "CRED", amount: "0.5000000014" }]);
   const wrong = createCchpReader(opts, async () => Response.json({
     page: { items: [{ ...old, sessionId: "different" }], nextCursor: null },
   }));

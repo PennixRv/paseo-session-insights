@@ -13,6 +13,8 @@ const rowSchema = z.object({
   ttftMs: integer.nullish(),
   tpsMilli: integer.nullish(),
   tpsBasis: z.enum(["ttfb", "ttft"]).nullish(),
+  costUnits: z.unknown().optional(),
+  adjustedCostUnits: z.unknown().optional(),
 });
 const pageSchema = z.object({ page: z.object({
   items: z.array(rowSchema).max(100),
@@ -21,7 +23,20 @@ const pageSchema = z.object({ page: z.object({
 }) });
 
 type Options = { baseUrl: string; token: string; apiKeyId: string };
-const amountUnavailable = { source: "cchp", state: "unsupported", basis: "金额单位待核验" } satisfies Metric;
+type Charge = { id: string; threadId: string; settled: boolean; money?: { currency: "CRED"; amount: string } };
+
+function readCharge(row: z.infer<typeof rowSchema>, threadId: string): Charge {
+  const id = row.requestId;
+  const units = integer.safeParse(row.adjustedCostUnits ?? row.costUnits);
+  if (row.completedAt == null || row.adjustedCostUnits === undefined || !units.success) {
+    return { id, threadId, settled: false };
+  }
+  // CCHP's billing ledger uses 10^10 units per credit.
+  const digits = String(units.data).padStart(11, "0");
+  return { id, threadId, settled: true, money: {
+    currency: "CRED", amount: `${digits.slice(0, -10)}.${digits.slice(-10)}`,
+  } };
+}
 
 function unavailable(state: Unavailable) {
   const metric = { source: "cchp", state } satisfies Metric;
@@ -72,7 +87,9 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
       const cursorHistory = new Set<string>();
       const requests = new Map<string, { id: string; threadId: string; streaming: boolean; completedAt: number;
         ttftMs?: number; tps?: number; basis?: "ttfb" | "ttft" }>();
+      const charges: Charge[] = [];
       let complete = false;
+      // shortcut: three pages per refresh; use a scoped aggregate if CCHP exposes one.
       for (let pageNumber = 0; pageNumber < 3; pageNumber++) {
         const response = await fetchImpl(endpoint.href, {
           method: "GET",
@@ -96,9 +113,10 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
         for (const row of page.items) {
           if (row.apiKeyId !== options.apiKeyId || row.sessionId !== threadId ||
             (row.clientSessionId != null && row.clientSessionId !== threadId)) return unavailable("unlinked");
-          if (!row.streaming || row.completedAt == null) continue;
-          const completedAt = Date.parse(row.completedAt);
-          if (!Number.isFinite(completedAt)) return unavailable("error");
+          const completedAt = row.completedAt == null ? null : Date.parse(row.completedAt);
+          if (completedAt !== null && !Number.isFinite(completedAt)) return unavailable("error");
+          charges.push(readCharge(row, threadId));
+          if (!row.streaming || completedAt === null) continue;
           const reading = {
             id: row.requestId, threadId, completedAt, streaming: true,
             ttftMs: row.ttftMs ?? undefined,
@@ -117,8 +135,7 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
         cursorHistory.add(page.nextCursor);
         endpoint.searchParams.set("cursor", page.nextCursor);
       }
-      const projection = projectGateway({ complete, requests: [...requests.values()], charges: [] }, threadId, clock(), "cchp");
-      return { ...projection, cost: amountUnavailable };
+      return projectGateway({ complete, requests: [...requests.values()], charges }, threadId, clock(), "cchp");
     } catch {
       return unavailable("error");
     } finally {
