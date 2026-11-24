@@ -6,20 +6,20 @@ import { Details, useRefreshWhileVisible } from "./client/details.tsx";
 import { fieldGlyphs } from "./client/glyphs.ts";
 import { createSession } from "./client/session.ts";
 import { formatSummary } from "./shared/format.ts";
-import { insightsRpc, summaryGroups, type Target } from "./shared/metrics.ts";
+import { insightsRpc, summaryGroups, type MetricId, type Target } from "./shared/metrics.ts";
 
 function register(client: PluginClientContext, target: Target, desktop: boolean) {
   const session = createSession(() => client.rpc(insightsRpc, target));
   const pills: PluginButtonRegistration[] = [];
 
-  function DesktopDetailsIcon(props: PluginButtonIconProps) {
+  function DesktopDetailsIcon({ field, ...props }: PluginButtonIconProps & { field: MetricId }) {
     const [instance] = useState(() => Symbol());
     const { open, owner } = useSyncExternalStore(session.subscribe, session.current);
     useEffect(() => session.attach(instance), [instance]);
     useRefreshWhileVisible(session, owner === instance);
     return (
       <>
-        <Text style={{ color: props.color, fontSize: props.size, lineHeight: props.size + 2 }}>{fieldGlyphs.input}</Text>
+        <Text style={{ color: props.color, fontSize: props.size, lineHeight: props.size + 2 }}>{fieldGlyphs[field]}</Text>
         {open && owner === instance && (
           <Modal title="会话指标" open onOpenChange={session.setOpen}>
             <Modal.Content>
@@ -39,8 +39,9 @@ function register(client: PluginClientContext, target: Target, desktop: boolean)
         ...target, id: `insights-${group.id}`,
         button: {
           title, label,
-          icon: index === 0 ? DesktopDetailsIcon : ({ size, color }) => (
-            <Text style={{ color, fontSize: size, lineHeight: size + 2 }}>{fieldGlyphs[group.ids[0]]}</Text>
+          // Paseo temporarily replaces the pressed action's icon with a spinner.
+          icon: index < 2 ? props => <DesktopDetailsIcon {...props} field={group.ids[0]} /> : props => (
+            <Text style={{ color: props.color, fontSize: props.size, lineHeight: props.size + 2 }}>{fieldGlyphs[group.ids[0]]}</Text>
           ),
           behavior: { kind: "action", onPress: () => session.setOpen(true) },
         },

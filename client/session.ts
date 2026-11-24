@@ -47,7 +47,10 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       if (!current.owner) publish({ owner: id });
       return () => {
         mounted.delete(id);
-        if (current.owner === id) publish({ owner: mounted.values().next().value ?? null, open: false });
+        if (current.owner === id) {
+          const owner = mounted.values().next().value ?? null;
+          publish({ owner, open: owner !== null && current.open });
+        }
       };
     },
     setOpen(open: boolean) {

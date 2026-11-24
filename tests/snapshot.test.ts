@@ -72,9 +72,13 @@ test("desktop requests share one fetch and reject old thread responses after inv
   assert.equal(session.current().snapshot.metrics.input.observedAt, 2);
   assert.equal(calls, 2);
   const alternate = Symbol();
-  session.attach(alternate);
+  const unmountAlternate = session.attach(alternate);
+  session.setOpen(true);
   unmountOwner();
   assert.equal(session.current().owner, alternate);
+  assert.equal(session.current().open, true);
+  unmountAlternate();
+  assert.equal(session.current().open, false);
   session.dispose();
 });
 
