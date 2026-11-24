@@ -1,0 +1,178 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { createCchpReader } from "../server/cchp.ts";
+import { readCodex } from "../server/codex.ts";
+import { projectCodex, projectGateway } from "../server/usage.ts";
+import { readProgress, readTeamwork } from "../server/workflow.ts";
+
+test("Codex counters use one exact cumulative sample and reject a wrong thread", () => {
+  const record = {
+    threadId: "a", complete: false,
+    usage: { input_tokens: 100, output_tokens: 20, cached_input_tokens: 37 },
+    compactionWindow: 2,
+  };
+  const projection = projectCodex(record, "a", 100);
+  assert.deepEqual(projection.cache, { state: "partial", source: "codex", observedAt: 100, value: 37 });
+  assert.deepEqual(projection.compactions, { state: "partial", source: "codex", observedAt: 100, value: 2 });
+  assert.throws(() => projectCodex(record, "b", 100), /thread mismatch/);
+  assert.throws(() => projectCodex({ ...record, usage: { ...record.usage, cached_input_tokens: 101 } }, "a", 100), /cache counters/);
+  assert.equal(projectCodex({ threadId: "a", complete: true, usage: {
+    input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
+  } }, "a", 100).cache?.state, "no-records");
+});
+
+test("gateway selects one request and sums cleared amounts exactly once", () => {
+  const threadId = "a";
+  const charge = { id: "one", threadId, settled: true, money: { currency: "USD", amount: "0.1" } };
+  const ledger = {
+    complete: true,
+    requests: [
+      { id: "first", threadId, completedAt: 1, streaming: true, ttftMs: 4, tps: 9, basis: "output-tokens" },
+      { id: "second", threadId, completedAt: 2, streaming: true, ttftMs: 6 },
+      { id: "other", threadId, completedAt: 3, streaming: false, ttftMs: 1 },
+    ],
+    charges: [charge, charge, { ...charge, id: "two", money: { currency: "USD", amount: "0.2" } },
+      { id: "pending", threadId, settled: false }],
+  };
+  const projection = projectGateway(ledger, threadId, 100, "cchp");
+  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, basis: undefined, state: "ready", value: 6 });
+  assert.equal(projection.tps?.state, "no-records");
+  assert.deepEqual(projection.cost, { source: "cchp", observedAt: 100, state: "partial", value: [{ currency: "USD", amount: "0.3" }] });
+  assert.throws(() => projectGateway(ledger, "another", 100, "cchp"), /thread mismatch/);
+  assert.throws(() => projectGateway({ ...ledger, charges: [charge, { ...charge, money: { currency: "USD", amount: "10" } }] }, threadId, 100, "cchp"), /Conflicting/);
+});
+
+test("Trellis reports only project counts and skips projects without a task directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-insights-"));
+  try {
+    let calls = 0;
+    const run = async (args: string[], cwd: string) => {
+      calls++;
+      assert.equal(cwd, root);
+      assert.deepEqual(args, ["task", "progress", "--json"]);
+      return { planning: 0, in_progress: 2, completed: 3, cancelled: 9, partial: true };
+    };
+    assert.equal((await readProgress(root, run)).planning?.state, "unsupported");
+    assert.equal(calls, 0);
+    await mkdir(join(root, ".trellis", "tasks"), { recursive: true });
+    assert.deepEqual(Object.keys(await readProgress(root, run)), ["planning", "inProgress", "completed"]);
+    assert.deepEqual((await readProgress(root, run, () => 20)).planning, {
+      state: "partial", value: 0, source: "trellis", observedAt: 20,
+    });
+  } finally { await rm(root, { recursive: true }); }
+});
+
+test("Teamwork filters the owner, de-duplicates workers and preserves partial coverage", async () => {
+  const now = 1_000_000;
+  const calls: string[][] = [];
+  const data = await readTeamwork("/fixture", "owner", async args => {
+    calls.push(args);
+    if (args[1] === "list") {
+      assert.ok(args.includes("owner"));
+      if (args[3] === "global") throw new Error("transient");
+      const same = { name: "root", project: "p", ownerSessionId: "owner" };
+      return [same, same, { name: "other", project: "p", ownerSessionId: "other" }];
+    }
+    assert.equal(args[2], "root");
+    assert.ok(args.includes("--project-key"));
+    const done = { workerId: "d", lifecycle: "done", updatedAt: new Date(now - 29_000).toISOString() };
+    return { items: [
+      { workerId: "a", lifecycle: "running", activity: "mid-turn" },
+      { workerId: "b", lifecycle: "running", activity: "idle" },
+      done, done, { ...done, workerId: "old", updatedAt: new Date(now - 30_000).toISOString() },
+    ] };
+  }, () => now);
+  assert.deepEqual(data.ended, { state: "partial", value: 1, source: "teamwork", observedAt: now });
+  assert.deepEqual(data.error, { state: "partial", value: 0, source: "teamwork", observedAt: now });
+  assert.equal(calls.filter(args => args[1] === "workers").length, 1);
+  assert.equal((await readTeamwork("/fixture", "owner", async () => [], () => now)).idle?.state, "ready");
+});
+
+test("Codex adapter follows only the indexed thread and projects known metadata", async () => {
+  const home = await mkdtemp(join(tmpdir(), "paseo-codex-fixture-"));
+  const signal = new AbortController().signal;
+  try {
+    await mkdir(join(home, "sessions"));
+    const indexed = join(home, "sessions", "rollout-fixture.jsonl");
+    const misplaced = join(home, "private.jsonl");
+    const db = new DatabaseSync(join(home, "state_5.sqlite"));
+    try {
+      db.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, archived INT)");
+      const insert = db.prepare("INSERT INTO threads VALUES (?, ?, 0)");
+      insert.run("thread-a", indexed);
+      insert.run("thread-b", indexed);
+      insert.run("outside", misplaced);
+    } finally { db.close(); }
+    const event = (type: string, payload: object) => JSON.stringify({ timestamp: "2026-11-24T01:30:00Z", type, payload });
+    const contents = [
+      event("session_meta", { id: "thread-a", base_instructions: "test-only system text" }),
+      event("event_msg", { type: "token_count", info: { total_token_usage: { input_tokens: 100, output_tokens: 30, cached_input_tokens: 40 } } }),
+      event("response_item", { type: "message", content: [{ type: "compacted", payload: { window_number: 90 } }] }),
+      event("compacted", { history: [{ window_number: 99, text: "test-only nested content" }], window_number: 2 }),
+    ];
+    await writeFile(indexed, `${contents.join("\n")}\n`);
+    await writeFile(misplaced, `${contents[0]}\n`);
+    const reading = await readCodex(home, "thread-a", signal);
+    assert.deepEqual(Object.values(reading).map(value => "value" in value ? value.value : value.state), [100, 30, 40, 2]);
+    assert.doesNotMatch(JSON.stringify(reading), /test-only/);
+    assert.equal((await readCodex(home, "thread-b", signal)).input?.state, "unlinked");
+    assert.equal((await readCodex(home, "outside", signal)).input?.state, "forbidden");
+    await writeFile(indexed, `${contents.join("\n")}\n${event("event_msg", { type: "thread_rolled_back" })}\n`);
+    assert.equal((await readCodex(home, "thread-a", signal)).compactions?.state, "no-records");
+  } finally { await rm(home, { recursive: true }); }
+});
+
+test("CCHP adapter queries exact thread and key and rejects other rows", async () => {
+  const signal = new AbortController().signal;
+  const opts = { baseUrl: "https://gateway.invalid/", token: "fixture-key", apiKeyId: "key1" };
+  const old = {
+    requestId: "old", sessionId: "thread", apiKeyId: "key1", completedAt: "2026-11-24T02:00:00Z",
+    streaming: true, ttftMs: 400, tpsMilli: 42000, tpsBasis: "ttft",
+  };
+  let calls = 0;
+  const read = createCchpReader(opts, async (input, init) => {
+    calls++;
+    const url = new URL(String(input));
+    assert.equal(url.pathname, "/api/account/usage/logs");
+    assert.equal(url.searchParams.get("sessionId"), "thread");
+    assert.equal(url.searchParams.get("apiKeyIds"), "key1");
+    assert.equal(init?.method, "GET");
+    assert.equal(init?.redirect, "error");
+    const latest = { ...old, requestId: "latest", completedAt: "2026-11-24T02:01:00Z",
+      ttftMs: 1234, tpsMilli: null };
+    return Response.json({ page: url.searchParams.has("cursor") ?
+      { items: [latest], nextCursor: null } : { items: [old], nextCursor: "next" } });
+  });
+  const reading = await read("thread", signal);
+  assert.equal(calls, 2);
+  assert.equal("value" in reading.ttft! && reading.ttft.value, 1234);
+  assert.equal(reading.tps?.state, "no-records");
+  assert.equal(reading.cost?.state, "unsupported");
+  const wrong = createCchpReader(opts, async () => Response.json({
+    page: { items: [{ ...old, sessionId: "different" }], nextCursor: null },
+  }));
+  assert.equal((await wrong("thread", signal)).ttft?.state, "unlinked");
+});
+
+test("gateway throttling and denied access clear rather than reuse an old reading", async () => {
+  const signal = new AbortController().signal;
+  const opts = { baseUrl: "https://gateway.invalid/", token: "fixture-key", apiKeyId: "key1" };
+  let calls = 0;
+  let time = 10_000;
+  const read = createCchpReader(opts, async () => {
+    calls++;
+    return calls === 1
+      ? new Response(null, { status: 429, headers: { "Retry-After": "2" } })
+      : new Response(null, { status: 403 });
+  }, () => time);
+  assert.equal((await read("thread", signal)).ttft?.state, "rate-limited");
+  assert.equal((await read("thread", signal)).tps?.state, "rate-limited");
+  assert.equal(calls, 1);
+  time += 2000;
+  assert.equal((await read("thread", signal)).ttft?.state, "forbidden");
+  assert.equal(calls, 2);
+});

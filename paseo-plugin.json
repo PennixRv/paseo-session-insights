@@ -1,0 +1,8 @@
+{
+  "id": "paseo-session-insights",
+  "name": "会话指标",
+  "description": "在 Paseo 中显示当前 Codex 会话的用量、请求性能与工作流状态。",
+  "requirements": {
+    "paseo": ">=0.17.3"
+  }
+}

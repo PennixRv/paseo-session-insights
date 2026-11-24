@@ -1,0 +1,68 @@
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { emptySnapshot, insightsRpc } from "./shared/metrics.ts";
+import { createCchpReader } from "./server/cchp.ts";
+import { readCodex } from "./server/codex.ts";
+import { fixtureSnapshot } from "./server/fixture.ts";
+import { createSnapshotHandler } from "./server/snapshot.ts";
+import { readProgress, readTeamwork, runTrellis } from "./server/workflow.ts";
+
+export default function contribute(server: PluginServerContext) {
+  const fixture = process.env.PASEO_SESSION_INSIGHTS_FIXTURE === "1";
+  const workflow = process.env.PASEO_SESSION_INSIGHTS_WORKFLOW === "1";
+  const codexHome = process.env.PASEO_SESSION_INSIGHTS_CODEX_HOME;
+  const cchp = {
+    baseUrl: process.env.PASEO_SESSION_INSIGHTS_CCHP_URL ?? "",
+    token: process.env.PASEO_SESSION_INSIGHTS_CCHP_TOKEN ?? "",
+    apiKeyId: process.env.PASEO_SESSION_INSIGHTS_CCHP_KEY_ID ?? "",
+  };
+  const readCchp = cchp.baseUrl && cchp.token && cchp.apiKeyId ? createCchpReader(cchp) : null;
+  const lifetime = new AbortController();
+  const progress = new Map<string, { expires: number; read: ReturnType<typeof readProgress> }>();
+  const run: Parameters<typeof readProgress>[1] = (args, cwd, timeout) => runTrellis(args, cwd, timeout, lifetime.signal);
+  function projectProgress(root: string) {
+    const existing = progress.get(root);
+    const now = Date.now();
+    if (existing && existing.expires > now) return existing.read;
+    for (const [path, value] of progress) if (value.expires <= now) progress.delete(path);
+    if (progress.size >= 128) return Promise.resolve({});
+    const read = readProgress(root, run);
+    progress.set(root, { expires: now + 60_000, read });
+    return read;
+  }
+  const handler = createSnapshotHandler(async subject => {
+    if (fixture) return fixtureSnapshot(Date.now());
+    const snapshot = emptySnapshot("unsupported");
+    if (!subject.threadId) {
+      for (const id of ["input", "output", "cache", "compactions", "cost", "ttft", "tps", "working", "idle", "error", "ended"] as const) {
+        snapshot.metrics[id] = { state: "waiting" };
+      }
+    }
+    const results = await Promise.all([
+      codexHome && readCodex(codexHome, subject.threadId, lifetime.signal),
+      readCchp?.(subject.threadId, lifetime.signal),
+      workflow && subject.workspaceRoot && projectProgress(subject.workspaceRoot),
+      workflow && subject.workspaceRoot && readTeamwork(subject.workspaceRoot, subject.threadId, run),
+    ]);
+    for (const projection of results) if (projection) Object.assign(snapshot.metrics, projection);
+    return snapshot;
+  });
+  server.handle(insightsRpc, (target, { paseo }) => handler.read(target, async ({ workspaceId, agentId }) => {
+    const handle = paseo.agents.ref(agentId);
+    const value = await handle.refresh();
+    if (!value || value.agent.id !== agentId || value.agent.workspaceId !== workspaceId ||
+      value.agent.provider !== "codex" || value.agent.archivedAt || value.agent.status === "closed") return null;
+    const { serverId } = handle.address;
+    if (!serverId) return null;
+    return {
+      serverId, workspaceId, agentId,
+      threadId: value.agent.runtimeInfo?.sessionId ?? null,
+      workspaceRoot: value.project?.checkout.worktreeRoot ?? value.project?.checkout.mainRepoRoot ??
+        value.project?.checkout.cwd ?? null,
+    };
+  }));
+  return () => {
+    lifetime.abort();
+    handler.stop();
+    progress.clear();
+  };
+}
