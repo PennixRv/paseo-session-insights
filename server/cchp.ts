@@ -17,7 +17,7 @@ const rowSchema = z.object({
   adjustedCostUnits: z.unknown().optional(),
 });
 const pageSchema = z.object({ page: z.object({
-  items: z.array(rowSchema).max(100),
+  items: z.array(rowSchema).max(200),
   nextCursor: z.string().max(2048).min(1).nullable(),
   totalIsLowerBound: z.boolean().optional(),
 }) });
@@ -65,14 +65,18 @@ async function boundedJson(response: Response): Promise<unknown> {
 
 export function createCchpReader(options: Options, fetchImpl = globalThis.fetch, clock = Date.now) {
   let retryAt = 0;
+  const costByThread = new Map<string, { expires: number; metric: Metric }>();
   return async function read(threadId: string | null, lifetime: AbortSignal) {
     if (!threadId) return unavailable("waiting");
     if (clock() < retryAt) return unavailable("rate-limited");
     if (lifetime.aborted) return unavailable("error");
+    const now = clock();
+    for (const [id, cost] of costByThread) if (cost.expires <= now) costByThread.delete(id);
+    const cachedCost = costByThread.get(threadId);
     const request = new AbortController();
     const abort = () => request.abort();
     lifetime.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(abort, 3000);
+    const timer = setTimeout(abort, cachedCost ? 3000 : 4500);
     try {
       const endpoint = new URL(options.baseUrl);
       if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
@@ -81,7 +85,7 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
       endpoint.pathname = "/api/account/usage/logs";
       endpoint.searchParams.set("sessionId", threadId);
       endpoint.searchParams.set("apiKeyIds", options.apiKeyId);
-      endpoint.searchParams.set("limit", "100");
+      endpoint.searchParams.set("limit", cachedCost ? "100" : "200");
       endpoint.searchParams.set("sort", "startedAtDesc");
 
       const cursorHistory = new Set<string>();
@@ -89,8 +93,9 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
         ttftMs?: number; tps?: number; basis?: "ttfb" | "ttft" }>();
       const charges: Charge[] = [];
       let complete = false;
-      // shortcut: three pages per refresh; use a scoped aggregate if CCHP exposes one.
-      for (let pageNumber = 0; pageNumber < 3; pageNumber++) {
+      // shortcut: bound a cost scan to 2,000 rows; use a scoped aggregate if CCHP exposes one.
+      const maxPages = cachedCost ? 3 : 10;
+      for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
         const response = await fetchImpl(endpoint.href, {
           method: "GET",
           headers: { Authorization: `Bearer ${options.token}`, Accept: "application/json" },
@@ -135,7 +140,23 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
         cursorHistory.add(page.nextCursor);
         endpoint.searchParams.set("cursor", page.nextCursor);
       }
-      return projectGateway({ complete, requests: [...requests.values()], charges }, threadId, clock(), "cchp");
+      const observedAt = clock();
+      const readings = projectGateway({ complete, requests: [...requests.values()], charges }, threadId, observedAt, "cchp");
+      if (cachedCost && !complete) return { ...readings, cost: cachedCost.metric };
+      const count = new Set(charges.map(charge => charge.id)).size;
+      const cost = readings.cost && {
+        ...readings.cost,
+        basis: !complete ? `仅查询最近 ${count} 条请求` : readings.cost.state === "partial" ?
+          `已查询 ${count} 条请求，部分未结算` : `已查询 ${count} 条请求`,
+      };
+      if (cost) {
+        if (!costByThread.has(threadId) && costByThread.size >= 16) {
+          const oldest = costByThread.keys().next();
+          if (!oldest.done) costByThread.delete(oldest.value);
+        }
+        costByThread.set(threadId, { expires: observedAt + 60_000, metric: cost });
+      }
+      return { ...readings, cost };
     } catch {
       return unavailable("error");
     } finally {

@@ -39,13 +39,13 @@ const requestSchema = z.object({
 });
 const ledger = z.object({
   complete: z.boolean(),
-  requests: z.array(requestSchema).max(1000),
+  requests: z.array(requestSchema).max(2000),
   charges: z.array(z.object({
     id: z.string().min(1).max(256),
     threadId: z.string().min(1),
     settled: z.boolean(),
     money: moneySchema.optional(),
-  })).max(1000),
+  })).max(2000),
 });
 
 function units(amount: string): bigint {

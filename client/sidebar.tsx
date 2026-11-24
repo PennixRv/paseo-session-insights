@@ -19,6 +19,7 @@ export function SidebarMetrics({
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const [open, setOpen] = useState(false);
   const { foreground, foregroundMuted, border } = theme.colors;
+  const fontIncrease = layout.platform === "android" || layout.platform === "ios" ? 2 : 0;
   useRefreshWhileVisible(session);
   const partial = Object.values(snapshot.metrics).some(metric => metric.state === "partial");
   const stale = Object.values(snapshot.metrics).some(metric => metric.state === "stale");
@@ -31,8 +32,8 @@ export function SidebarMetrics({
       <View key={id} testID={`insights-sidebar-metric-${id}`} accessible
         accessibilityLabel={[labels[id], value, stateLabels[reading.state]].filter(Boolean).join("，")}
         style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 5 }}>
-        <Text style={{ color: foregroundMuted, fontSize: 11, flexShrink: 1 }}>{shortLabels[id]}</Text>
-        <Text style={{ color: foreground, fontSize: 12, fontVariant: ["tabular-nums"] }}>{value}</Text>
+        <Text style={{ color: foregroundMuted, fontSize: 11 + fontIncrease, flexShrink: 1 }}>{shortLabels[id]}</Text>
+        <Text style={{ color: foreground, fontSize: 12 + fontIncrease, fontVariant: ["tabular-nums"] }}>{value}</Text>
       </View>
     );
   };
@@ -41,11 +42,11 @@ export function SidebarMetrics({
   return (
     <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5, borderTopColor: border, borderTopWidth: 1 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 13 }}>会话指标</Text>
-        <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 11 }}>{title}</Text>
+        <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 13 + fontIncrease }}>会话指标</Text>
+        <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 11 + fontIncrease }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
           style={{ minHeight: layout.compact ? 44 : 24, paddingHorizontal: 4, justifyContent: "center" }}>
-          <Text style={{ color: foregroundMuted, fontSize: 11 }}>详情</Text>
+          <Text style={{ color: foregroundMuted, fontSize: 11 + fontIncrease }}>详情</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -54,14 +55,14 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", gap: 10 }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, gap: 3 }}>
-            <Text accessibilityRole="header" style={{ color: foregroundMuted, fontSize: 11, fontWeight: "600" }}>
+            <Text accessibilityRole="header" style={{ color: foregroundMuted, fontSize: 11 + fontIncrease, fontWeight: "600" }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>
             {group.ids.map(renderMetric)}
           </View>
         ))}
       </View>
-      {!!status && <Text style={{ color: foregroundMuted, fontSize: 10 }}>{status}</Text>}
+      {!!status && <Text style={{ color: foregroundMuted, fontSize: 10 + fontIncrease }}>{status}</Text>}
       {open && <Modal title="会话指标" open onOpenChange={setOpen}>
         <Modal.Content><Details session={session} theme={theme} layout={layout} /></Modal.Content>
       </Modal>}

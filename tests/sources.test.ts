@@ -235,3 +235,39 @@ test("gateway throttling and denied access clear rather than reuse an old readin
   assert.equal((await read("thread", signal)).ttft?.state, "forbidden");
   assert.equal(calls, 2);
 });
+
+test("CCHP totals the session beyond three pages and refreshes performance between cost scans", async () => {
+  const signal = new AbortController().signal;
+  const opts = { baseUrl: "https://gateway.invalid", token: "fixture-key", apiKeyId: "key1" };
+  let clock = 60_000;
+  let pages = 0;
+  const read = createCchpReader(opts, async input => {
+    const url = new URL(String(input));
+    const page = Number(url.searchParams.get("cursor") ?? 0);
+    pages++;
+    return Response.json({ page: {
+      nextCursor: page < 4 ? String(page + 1) : null,
+      items: [{
+        requestId: `request-${page}`, sessionId: "thread", apiKeyId: "key1",
+        completedAt: new Date(clock - page).toISOString(), streaming: true,
+        ttftMs: clock, tpsMilli: 42000, tpsBasis: "ttfb",
+        costUnits: 10_000_000_000, adjustedCostUnits: null,
+      }],
+    } });
+  }, () => clock);
+  const first = await read("thread", signal);
+  assert.equal(pages, 5);
+  assert.deepEqual(first.cost, {
+    source: "cchp", observedAt: 60_000, state: "ready",
+    basis: "已查询 5 条请求", value: [{ currency: "CRED", amount: "5" }],
+  });
+  clock += 15_000;
+  const second = await read("thread", signal);
+  assert.equal(pages, 8);
+  assert.deepEqual(second.cost, first.cost);
+  assert.equal("value" in second.ttft! && second.ttft.value, clock);
+  clock += 45_000;
+  const next = await read("thread", signal);
+  assert.equal(next.cost && "observedAt" in next.cost && next.cost.observedAt, clock);
+  assert.equal(pages, 13);
+});

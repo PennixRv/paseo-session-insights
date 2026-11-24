@@ -31,4 +31,4 @@ npm pack --dry-run
 
 CCHP 读取需要包含本插件接入的 Pennix Lifecycle 版本。使用 `pennix config edit` 在 Paseo 配置中启用会话指标 CCHP 取数，填写控制面 HTTPS 地址及该 Codex 推理密钥的 ID。运行 `pennix secrets edit`，在 `[cchp]` 下写入组织范围内具有 `usage:read` 的 `usage_token`。默认秘密文件为 `~/.config/pennix/secrets.toml`。运行 `pennix secrets check` 核对字段完整性。插件服务端通过 Lifecycle 私有管道读取配置和令牌，同一 daemon 的客户端共享指标结果。
 
-Codex 本地适配以 `threads` 索引和活动 JSONL 会话为基线。超出读取上限的会话会标记覆盖范围。CCHP 费用以账本额度 `CRED` 显示，按请求去重，优先取校正后的净金额。网关一次最多读取 300 条记录。有更多记录或存在尚未核实金额的请求时，已有小计标为部分覆盖。详见[图标来源](licenses/NOTICE.md)。
+Codex 本地适配以 `threads` 索引和活动 JSONL 会话为基线。超出读取上限的会话会标记覆盖范围。CCHP 已结算费用以账本额度 `CRED` 显示，按请求去重，优先取校正后的净金额。费用扫描最多查最近 2,000 条请求，长会话的扫描结果可复用 60 秒。详情显示查询条数，有更多记录或尚未核实的金额时标为部分覆盖。详见[图标来源](licenses/NOTICE.md)。
