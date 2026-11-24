@@ -1,4 +1,4 @@
-import { labels, summaryGroups, type Metric, type MetricId, type Snapshot } from "./metrics.ts";
+import { summaryGroups, type Metric, type MetricId, type Snapshot } from "./metrics.ts";
 
 export const stateLabels: Record<Metric["state"], string> = {
   loading: "正在读取", waiting: "等待记录", "no-records": "暂无记录", unsupported: "来源未接入",
@@ -46,16 +46,22 @@ export function formatMetric(id: MetricId, metric: Metric, summary = false): str
 }
 
 export function formatSummary(snapshot: Snapshot) {
+  const names = {
+    tokens: "输入／输出",
+    usage: "缓存／压缩／费用",
+    performance: "首 token／速率",
+    trellis: "Trellis 进度",
+    teamwork: "Teamwork 状态",
+  };
   return summaryGroups.map(group => {
     const readings = group.ids.map(id => snapshot.metrics[id]);
-    const markers = `${readings.some(m => m.state === "partial") ? "*" : ""}${readings.some(m => m.state === "stale") ? "~" : ""}`;
+    const partial = readings.some(m => m.state === "partial");
+    const stale = readings.some(m => m.state === "stale");
+    const values = group.ids.map(id => formatMetric(id, snapshot.metrics[id], true)).join(group.separator);
     return {
       id: group.id,
-      label: `${group.ids.map(id => formatMetric(id, snapshot.metrics[id], true)).join(group.separator)}${markers}${snapshot.fixture && group.id === "tokens" ? "†" : ""}`,
-      title: `${snapshot.fixture ? "演示数据。 " : ""}${group.ids.map(id => {
-        const reading = snapshot.metrics[id];
-        return [labels[id], formatMetric(id, reading), stateLabels[reading.state]].filter(Boolean).join(" ");
-      }).join("，")}。打开会话指标`,
+      label: `${values}${partial ? "*" : ""}${stale ? "~" : ""}${snapshot.fixture && group.id === "tokens" ? "†" : ""}`,
+      title: `${snapshot.fixture ? "演示 " : ""}${names[group.id]} ${values}${partial ? "，部分覆盖" : ""}${stale ? "，已过期" : ""}`,
     };
   });
 }

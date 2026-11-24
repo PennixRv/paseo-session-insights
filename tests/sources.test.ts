@@ -162,6 +162,13 @@ test("Codex adapter follows only the indexed thread and projects known metadata"
     assert.equal((await readCodex(home, "outside", signal)).input?.state, "forbidden");
     await writeFile(indexed, `${contents.join("\n")}\n${event("event_msg", { type: "thread_rolled_back" })}\n`);
     assert.equal((await readCodex(home, "thread-a", signal)).compactions?.state, "no-records");
+    const longResponse = event("response_item", { type: "message", text: " ".repeat(3 * 1024 * 1024) });
+    const oldCompaction = `${contents.join("\n")}\n${longResponse}\n`;
+    await writeFile(indexed, oldCompaction);
+    const recovered = (await readCodex(home, "thread-a", signal)).compactions;
+    assert.equal(recovered && "value" in recovered && recovered.value, 2);
+    await writeFile(indexed, `${oldCompaction}${event("event_msg", { type: "thread_rolled_back" })}\n`);
+    assert.equal((await readCodex(home, "thread-a", signal)).compactions?.state, "no-records");
     const scopedContents = [
       event("session_meta", { account_scoped: true, creator_user_id: "fixture", creator_account_id: "fixture",
         session_id: "thread-a", id: "thread-a", base_instructions: "test-only system text" }),

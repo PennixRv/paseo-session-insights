@@ -19,6 +19,8 @@ test("both surfaces keep the same 14 metrics, legacy icon shapes, units and grou
   assert.deepEqual(summaryGroups.flatMap(group => [...group.ids]), [...metricIds]);
   assert.deepEqual(formatSummary(fixture).map(group => group.label),
     ["25.9M/1.34M†", "87%·12·4.28$", "1.2s·46t/s", "3/1/12", "2/1/0/1"]);
+  const partial = { ...fixture, fixture: false, metrics: { ...fixture.metrics, input: { state: "partial" as const, value: 25_900_000 } } };
+  assert.equal(formatSummary(partial)[0].title, "输入／输出 25.9M/1.34M，部分覆盖");
   assert.deepEqual(Object.keys(fieldGlyphs), [...metricIds]);
   assert.deepEqual(Object.values(fieldGlyphs).map(glyph => glyph.codePointAt(0)),
     [0xF021A, 0xF021A, 0xF0CFF, 0xF1B8, 0xF0584, 0xEF0C, 0xF04C5, 0xF0EA6, 0xF0EA6, 0xF0EA6,

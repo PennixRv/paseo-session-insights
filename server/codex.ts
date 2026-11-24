@@ -7,6 +7,7 @@ import { projectCodex } from "./usage.ts";
 const ids = ["input", "output", "cache", "compactions"] as const;
 const headerBudget = 64 * 1024;
 const tailBudget = 2 * 1024 * 1024;
+const compactionTailBudget = 8 * 1024 * 1024;
 const metadataBudget = 32 * 1024;
 const rolloutPrefix = /^\{"timestamp":"[^"\\]{1,80}",(?:"ordinal":\d+,)?"type":"([a-z_]+)","payload":/;
 const sessionIdentity = /^\{(?:"(?:account_scoped|creator_user_id|creator_account_id)":(?:true|false|null|"[^"\\]{0,128}"),)*"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})"(?:(?:,"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})")|(?=,|}))/;
@@ -49,6 +50,42 @@ function compactWindow(line: string): number | undefined {
   return undefined;
 }
 
+function scanTail(tail: Buffer, fromHeader: boolean, sizeStable: boolean) {
+  let complete = fromHeader && sizeStable;
+  let usage: unknown;
+  let compactionWindow: number | undefined = complete ? 0 : undefined;
+  let compactionUnknown = false;
+  let cursor = fromHeader ? 0 : tail.indexOf(10) + 1;
+  if (!fromHeader && cursor === 0) return { complete: false, usage, compactionWindow, compactionUnknown };
+  for (let end; (end = tail.indexOf(10, cursor)) !== -1; cursor = end + 1) {
+    const buffer = tail.subarray(cursor, end);
+    const prefix = buffer.subarray(0, 256).toString("utf8");
+    const kind = rolloutPrefix.exec(prefix)?.[1];
+    if (!kind) { complete = false; compactionUnknown = true; continue; }
+    if (kind === "compacted") {
+      const window = compactWindow(buffer.toString("utf8"));
+      if (window === undefined || !Number.isSafeInteger(window) || window < 1) compactionUnknown = true;
+      else compactionWindow = Math.max(compactionWindow ?? 0, window);
+      continue;
+    }
+    if (kind !== "event_msg") continue;
+    if (prefix.includes('"payload":{"type":"thread_rolled_back"')) {
+      complete = false;
+      compactionUnknown = true;
+      usage = undefined;
+      continue;
+    }
+    if (!prefix.includes('"payload":{"type":"token_count"')) continue;
+    if (buffer.length > metadataBudget) { complete = false; usage = undefined; continue; }
+    try {
+      const record = JSON.parse(buffer.toString("utf8"));
+      const total = record.payload?.info?.total_token_usage;
+      if (total !== undefined) usage = total;
+    } catch { complete = false; usage = undefined; }
+  }
+  return { complete: complete && cursor === tail.length, usage, compactionWindow, compactionUnknown };
+}
+
 export async function readCodex(codexHome: string, threadId: string | null, signal: AbortSignal): Promise<Projection> {
   if (!threadId) return unavailable("waiting");
   if (!isAbsolute(codexHome)) return unavailable("unsupported");
@@ -81,48 +118,22 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
       const id = meta?.[1] === "session_meta" ? sessionIdentity.exec(first.slice(meta[0].length)) : null;
       if (id?.[1] !== threadId || (id[2] !== undefined && id[2] !== threadId)) return unavailable("unlinked");
 
-      if (signal.aborted) return unavailable("error");
-      // shortcut: bounded tail without a persisted cursor, widen only after measuring long-session coverage.
-      const offset = Math.max(newline + 1, stats.size - tailBudget);
-      const tail = Buffer.alloc(stats.size - offset);
-      const read = await file.read(tail, 0, tail.length, offset);
-      if (signal.aborted) return unavailable("error");
-      const last = await file.stat();
-      if (last.size < stats.size || read.bytesRead !== tail.length) return unavailable("waiting");
-      let complete = offset === newline + 1 && last.size === stats.size;
-      let usage: unknown;
-      let compactionWindow: number | undefined = complete ? 0 : undefined;
-      let compactionUnknown = false;
-      let cursor = offset === newline + 1 ? 0 : tail.indexOf(10) + 1;
-      if (offset > newline + 1 && cursor === 0) return unavailable("no-records");
-      for (let end; (end = tail.indexOf(10, cursor)) !== -1; cursor = end + 1) {
-        const buffer = tail.subarray(cursor, end);
-        const prefix = buffer.subarray(0, 256).toString("utf8");
-        const kind = rolloutPrefix.exec(prefix)?.[1];
-        if (!kind) { complete = false; compactionUnknown = true; continue; }
-        if (kind === "compacted") {
-          const window = compactWindow(buffer.toString("utf8"));
-          if (window === undefined || !Number.isSafeInteger(window) || window < 1) compactionUnknown = true;
-          else compactionWindow = Math.max(compactionWindow ?? 0, window);
-          continue;
-        }
-        if (kind !== "event_msg") continue;
-        if (prefix.includes('"payload":{"type":"thread_rolled_back"')) {
-          complete = false;
-          compactionUnknown = true;
-          usage = undefined;
-          continue;
-        }
-        if (!prefix.includes('"payload":{"type":"token_count"')) continue;
-        if (buffer.length > metadataBudget) { complete = false; usage = undefined; continue; }
-        try {
-          const record = JSON.parse(buffer.toString("utf8"));
-          const total = record.payload?.info?.total_token_usage;
-          if (total !== undefined) usage = total;
-        } catch { complete = false; usage = undefined; }
+      // shortcut: search at most 8 MiB for older compactions; use a scoped checkpoint if more history is needed.
+      for (const budget of [tailBudget, compactionTailBudget]) {
+        if (signal.aborted) return unavailable("error");
+        const offset = Math.max(newline + 1, stats.size - budget);
+        const tail = Buffer.alloc(stats.size - offset);
+        const read = await file.read(tail, 0, tail.length, offset);
+        if (signal.aborted) return unavailable("error");
+        const last = await file.stat();
+        if (last.size < stats.size || read.bytesRead !== tail.length) return unavailable("waiting");
+        const fromHeader = offset === newline + 1;
+        const { complete, usage, compactionWindow, compactionUnknown } =
+          scanTail(tail, fromHeader, last.size === stats.size);
+        if (budget === tailBudget && !fromHeader && !compactionUnknown && compactionWindow === undefined) continue;
+        return projectCodex({ threadId, complete, usage, compactionWindow: compactionUnknown ? undefined : compactionWindow }, threadId, Date.now());
       }
-      if (cursor < tail.length) complete = false;
-      return projectCodex({ threadId, complete, usage, compactionWindow: compactionUnknown ? undefined : compactionWindow }, threadId, Date.now());
+      return unavailable("no-records");
     } finally { await file.close(); }
   } catch (error) {
     if (error instanceof Error && "code" in error) {
