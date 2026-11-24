@@ -28,7 +28,7 @@ export default function contribute(server: PluginServerContext) {
     if (fixture) return fixtureSnapshot(Date.now());
     const snapshot = emptySnapshot("unsupported");
     if (!subject.threadId) {
-      for (const id of ["input", "output", "cache", "compactions", "cost", "ttft", "tps", "working", "idle", "error", "ended"] as const) {
+      for (const id of ["input", "output", "cachedInput", "cache", "compactions", "cost", "ttft", "tps", "working", "idle", "error", "ended"] as const) {
         snapshot.metrics[id] = { state: "waiting" };
       }
     }

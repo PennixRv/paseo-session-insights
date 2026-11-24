@@ -5,7 +5,7 @@ import { findFocusedAgent } from "../client/focus.ts";
 import { createSession } from "../client/session.ts";
 import { fixtureSnapshot } from "../server/fixture.ts";
 import { createSnapshotHandler, type Subject } from "../server/snapshot.ts";
-import { formatMetric, formatSidebarMetric } from "../shared/format.ts";
+import { formatMetric } from "../shared/format.ts";
 import { detailGroups, emptySnapshot, metricIds, snapshotSchema, targetSchema } from "../shared/metrics.ts";
 
 function deferred<T>() {
@@ -14,16 +14,15 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-test("both surfaces keep the same 14 metrics, legacy icon shapes, units and groups", () => {
+test("both surfaces keep the same 15 metrics, legacy icon shapes, units and groups", () => {
   const fixture = snapshotSchema.parse(fixtureSnapshot(100));
   assert.deepEqual(detailGroups.flatMap(group => [...group.ids]), [...metricIds]);
-  assert.deepEqual(metricIds.map(id => formatSidebarMetric(id, fixture.metrics[id])),
-    ["25.9M", "1.34M", "87%", "12", "4.28$", "1.2s", "46t/s", "3", "1", "12", "2", "1", "0", "1"]);
-  assert.equal(formatSidebarMetric("input", { state: "partial", value: 25_900_000 }), "25.9M*");
-  assert.equal(formatSidebarMetric("input", { state: "stale", value: 25_900_000 }), "25.9M~");
+  assert.deepEqual(metricIds.map(id => formatMetric(id, fixture.metrics[id], true)),
+    ["25.9M", "1.34M", "22.5M", "87%", "12", "4.28 USD", "1.2s", "46 tok/s", "3", "1", "12", "2", "1", "0", "1"]);
+  assert.equal(formatMetric("cost", { state: "partial", value: [{ amount: "2.34", currency: "CRED" }] }, true), "2.34 CRED");
   assert.deepEqual(Object.keys(fieldGlyphs), [...metricIds]);
   assert.deepEqual(Object.values(fieldGlyphs).map(glyph => glyph.codePointAt(0)),
-    [0xF021A, 0xF021A, 0xF0CFF, 0xF1B8, 0xF0584, 0xEF0C, 0xF04C5, 0xF0EA6, 0xF0EA6, 0xF0EA6,
+    [0xF021A, 0xF021A, 0xF0CFF, 0xF0CFF, 0xF1B8, 0xF0584, 0xEF0C, 0xF04C5, 0xF0EA6, 0xF0EA6, 0xF0EA6,
       0xF01D, 0xF192, 0xF29C, 0xF05D]);
   assert.equal(formatMetric("input", fixture.metrics.input), "25.90M");
   assert.equal(formatMetric("cache", fixture.metrics.cache), "87.00%");
@@ -34,7 +33,7 @@ test("both surfaces keep the same 14 metrics, legacy icon shapes, units and grou
 test("formatter distinguishes missing, tiny values and zero", () => {
   assert.equal(formatMetric("working", { state: "waiting" }, true), "—");
   assert.equal(formatMetric("working", { state: "ready", value: 0 }, true), "0");
-  assert.equal(formatMetric("cost", { state: "ready", value: [{ currency: "USD", amount: "0.00001" }] }, true), "<0.01$");
+  assert.equal(formatMetric("cost", { state: "ready", value: [{ currency: "USD", amount: "0.00001" }] }, true), "<0.01 USD");
   const credits = emptySnapshot("waiting");
   credits.metrics.cost = { state: "partial", value: [{ currency: "CRED", amount: "0.5000000014" }] };
   assert.equal(snapshotSchema.safeParse(credits).success, true);

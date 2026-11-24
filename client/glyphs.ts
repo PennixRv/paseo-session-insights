@@ -3,6 +3,7 @@ import type { MetricId } from "../shared/metrics.ts";
 export const fieldGlyphs = {
   input: "\u{F021A}",
   output: "\u{F021A}",
+  cachedInput: "\u{F0CFF}",
   cache: "\u{F0CFF}",
   compactions: "\u{F1B8}",
   cost: "\u{F0584}",

@@ -7,24 +7,29 @@ const value = z.number().finite().nonnegative();
 const tokenUsage = z.object({ input_tokens: count, output_tokens: count, cached_input_tokens: count });
 const codexMetadata = z.object({
   threadId: z.string().min(1),
-  complete: z.boolean(),
   usage: tokenUsage.optional(),
+  usageAt: count.optional(),
   compactionWindow: count.optional(),
+  compactionAt: count.optional(),
 });
 
 /** Only the locator for a verified rollout may supply this metadata. */
 export function projectCodex(raw: unknown, threadId: string, observedAt: number): Projection {
   const data = codexMetadata.parse(raw);
   if (data.threadId !== threadId) throw new Error("Codex thread mismatch");
-  const common = { source: "codex", observedAt, state: data.complete ? "ready" : "partial" } as const;
+  const common = { source: "codex", observedAt, state: "ready" } as const;
+  const cumulative = { ...common, sampleAt: data.usageAt };
   const absent = { source: common.source, observedAt, state: "no-records" } as const;
   const usage = data.usage;
   if (usage && usage.cached_input_tokens > usage.input_tokens) throw new Error("Invalid Codex cache counters");
   return {
-    input: usage ? { ...common, value: usage.input_tokens } : absent,
-    output: usage ? { ...common, value: usage.output_tokens } : absent,
-    cache: usage?.input_tokens ? { ...common, value: usage.cached_input_tokens / usage.input_tokens * 100 } : absent,
-    compactions: data.compactionWindow !== undefined ? { ...common, value: data.compactionWindow } : absent,
+    input: usage ? { ...cumulative, value: usage.input_tokens } : absent,
+    output: usage ? { ...cumulative, value: usage.output_tokens } : absent,
+    cachedInput: usage ? { ...cumulative, value: usage.cached_input_tokens } : absent,
+    cache: usage?.input_tokens ? { ...cumulative, value: usage.cached_input_tokens / usage.input_tokens * 100 } : absent,
+    compactions: data.compactionWindow !== undefined ? {
+      ...common, sampleAt: data.compactionAt, value: data.compactionWindow,
+    } : absent,
   };
 }
 
@@ -60,7 +65,9 @@ export function projectGateway(raw: unknown, threadId: string, observedAt: numbe
     b.completedAt - a.completedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   )[0];
   const requestInfo = { source, observedAt, sampleAt: latest?.completedAt };
-  const perfState = data.complete ? "ready" : "partial";
+  const scope = data.complete ? "已查请求中最近完成" : `最近 ${new Set(data.charges.map(row => row.id)).size} 条请求中最近完成`;
+  const timingBasis = latest?.basis === "ttfb" ? "按首字节计时" :
+    latest?.basis === "ttft" ? "按首 token 计时" : undefined;
   const totals = new Map<string, bigint>();
   const seen = new Map<string, string>();
   let pending = false;
@@ -84,9 +91,9 @@ export function projectGateway(raw: unknown, threadId: string, observedAt: numbe
   const common = { source, observedAt } as const;
   return {
     ttft: latest?.ttftMs === undefined ? { ...requestInfo, state: "no-records" } :
-      { ...requestInfo, state: perfState, value: latest.ttftMs },
+      { ...requestInfo, basis: scope, state: "ready", value: latest.ttftMs },
     tps: latest?.tps === undefined || !latest.basis ? { ...requestInfo, state: "no-records" } :
-      { ...requestInfo, basis: latest.basis, state: perfState, value: latest.tps },
+      { ...requestInfo, basis: timingBasis ? `${scope} · ${timingBasis}` : scope, state: "ready", value: latest.tps },
     cost: list.length ? { ...common, state: data.complete && !pending ? "ready" : "partial", value: list } :
       { ...common, state: pending ? "waiting" : "no-records" },
   };

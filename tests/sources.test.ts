@@ -50,16 +50,17 @@ test("Lifecycle local sources require the configured daemon home and plug-in pro
 
 test("Codex counters use one exact cumulative sample and reject a wrong thread", () => {
   const record = {
-    threadId: "a", complete: false,
+    threadId: "a", usageAt: 80, compactionAt: 60,
     usage: { input_tokens: 100, output_tokens: 20, cached_input_tokens: 37 },
     compactionWindow: 2,
   };
   const projection = projectCodex(record, "a", 100);
-  assert.deepEqual(projection.cache, { state: "partial", source: "codex", observedAt: 100, value: 37 });
-  assert.deepEqual(projection.compactions, { state: "partial", source: "codex", observedAt: 100, value: 2 });
+  assert.deepEqual(projection.cachedInput, { state: "ready", source: "codex", observedAt: 100, sampleAt: 80, value: 37 });
+  assert.deepEqual(projection.cache, projection.cachedInput);
+  assert.deepEqual(projection.compactions, { state: "ready", source: "codex", observedAt: 100, sampleAt: 60, value: 2 });
   assert.throws(() => projectCodex(record, "b", 100), /thread mismatch/);
   assert.throws(() => projectCodex({ ...record, usage: { ...record.usage, cached_input_tokens: 101 } }, "a", 100), /cache counters/);
-  assert.equal(projectCodex({ threadId: "a", complete: true, usage: {
+  assert.equal(projectCodex({ threadId: "a", usage: {
     input_tokens: 0, output_tokens: 0, cached_input_tokens: 0,
   } }, "a", 100).cache?.state, "no-records");
 });
@@ -78,7 +79,7 @@ test("gateway selects one request and sums cleared amounts exactly once", () => 
       { id: "pending", threadId, settled: false }],
   };
   const projection = projectGateway(ledger, threadId, 100, "cchp");
-  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, state: "ready", value: 6 });
+  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, state: "ready", value: 6, basis: "已查请求中最近完成" });
   assert.equal(projection.tps?.state, "no-records");
   assert.deepEqual(projection.cost, { source: "cchp", observedAt: 100, state: "partial", value: [{ currency: "USD", amount: "0.3" }] });
   assert.throws(() => projectGateway(ledger, "another", 100, "cchp"), /thread mismatch/);
@@ -156,7 +157,7 @@ test("Codex adapter follows only the indexed thread and projects known metadata"
     await writeFile(indexed, `${contents.join("\n")}\n`);
     await writeFile(misplaced, `${contents[0]}\n`);
     const reading = await readCodex(home, "thread-a", signal);
-    assert.deepEqual(Object.values(reading).map(value => "value" in value ? value.value : value.state), [100, 30, 40, 2]);
+    assert.deepEqual(Object.values(reading).map(value => "value" in value ? value.value : value.state), [100, 30, 40, 40, 2]);
     assert.doesNotMatch(JSON.stringify(reading), /test-only/);
     assert.equal((await readCodex(home, "thread-b", signal)).input?.state, "unlinked");
     assert.equal((await readCodex(home, "outside", signal)).input?.state, "forbidden");
@@ -165,8 +166,11 @@ test("Codex adapter follows only the indexed thread and projects known metadata"
     const longResponse = event("response_item", { type: "message", text: " ".repeat(3 * 1024 * 1024) });
     const oldCompaction = `${contents.join("\n")}\n${longResponse}\n`;
     await writeFile(indexed, oldCompaction);
-    const recovered = (await readCodex(home, "thread-a", signal)).compactions;
-    assert.equal(recovered && "value" in recovered && recovered.value, 2);
+    const recovered = await readCodex(home, "thread-a", signal);
+    assert.equal(recovered.compactions?.state, "ready");
+    assert.equal(recovered.compactions && "value" in recovered.compactions && recovered.compactions.value, 2);
+    assert.equal(recovered.cachedInput?.state, "ready");
+    assert.equal(recovered.compactions?.sampleAt, Date.parse("2026-11-24T01:30:00Z"));
     await writeFile(indexed, `${oldCompaction}${event("event_msg", { type: "thread_rolled_back" })}\n`);
     assert.equal((await readCodex(home, "thread-a", signal)).compactions?.state, "no-records");
     const scopedContents = [
@@ -176,7 +180,7 @@ test("Codex adapter follows only the indexed thread and projects known metadata"
     ].map((line, ordinal) => line.replace(',"type":', `,"ordinal":${ordinal},"type":`));
     await writeFile(indexed, `${scopedContents.join("\n")}\n`);
     assert.deepEqual(Object.values(await readCodex(home, "thread-a", signal)).map(value =>
-      "value" in value ? value.value : value.state), [100, 30, 40, 2]);
+      "value" in value ? value.value : value.state), [100, 30, 40, 40, 2]);
     await writeFile(indexed, `${scopedContents.join("\n").replace('"id":"thread-a"', '"id":"thread-b"')}\n`);
     assert.equal((await readCodex(home, "thread-a", signal)).input?.state, "unlinked");
   } finally { await rm(home, { recursive: true }); }
@@ -266,6 +270,8 @@ test("CCHP totals the session beyond three pages and refreshes performance betwe
   assert.equal(pages, 8);
   assert.deepEqual(second.cost, first.cost);
   assert.equal("value" in second.ttft! && second.ttft.value, clock);
+  assert.equal(second.ttft?.state, "ready");
+  assert.equal(second.tps && "basis" in second.tps && second.tps.basis, "最近 3 条请求中最近完成 · 按首字节计时");
   clock += 45_000;
   const next = await read("thread", signal);
   assert.equal(next.cost && "observedAt" in next.cost && next.cost.observedAt, clock);

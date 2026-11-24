@@ -144,10 +144,13 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
       const readings = projectGateway({ complete, requests: [...requests.values()], charges }, threadId, observedAt, "cchp");
       if (cachedCost && !complete) return { ...readings, cost: cachedCost.metric };
       const count = new Set(charges.map(charge => charge.id)).size;
+      const settled = new Set(charges.filter(charge => charge.settled).map(charge => charge.id)).size;
       const cost = readings.cost && {
         ...readings.cost,
-        basis: !complete ? `仅查询最近 ${count} 条请求` : readings.cost.state === "partial" ?
-          `已查询 ${count} 条请求，部分未结算` : `已查询 ${count} 条请求`,
+        basis: [
+          complete ? `已查询 ${count} 条请求` : `仅覆盖最近 ${count} 条请求`,
+          settled < count ? `${count - settled} 条结算待确认` : "",
+        ].filter(Boolean).join("，"),
       };
       if (cost) {
         if (!costByThread.has(threadId) && costByThread.size >= 16) {

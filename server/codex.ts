@@ -4,12 +4,12 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import type { Metric, MetricId, Unavailable } from "../shared/metrics.ts";
 import { projectCodex } from "./usage.ts";
 
-const ids = ["input", "output", "cache", "compactions"] as const;
+const ids = ["input", "output", "cachedInput", "cache", "compactions"] as const;
 const headerBudget = 64 * 1024;
 const tailBudget = 2 * 1024 * 1024;
 const compactionTailBudget = 8 * 1024 * 1024;
 const metadataBudget = 32 * 1024;
-const rolloutPrefix = /^\{"timestamp":"[^"\\]{1,80}",(?:"ordinal":\d+,)?"type":"([a-z_]+)","payload":/;
+const rolloutPrefix = /^\{"timestamp":"(?<time>[^"\\]{1,80})",(?:"ordinal":\d+,)?"type":"(?<kind>[a-z_]+)","payload":/;
 const sessionIdentity = /^\{(?:"(?:account_scoped|creator_user_id|creator_account_id)":(?:true|false|null|"[^"\\]{0,128}"),)*"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})"(?:(?:,"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})")|(?=,|}))/;
 type Projection = Partial<Record<MetricId, Metric>>;
 
@@ -51,39 +51,53 @@ function compactWindow(line: string): number | undefined {
 }
 
 function scanTail(tail: Buffer, fromHeader: boolean, sizeStable: boolean) {
-  let complete = fromHeader && sizeStable;
   let usage: unknown;
-  let compactionWindow: number | undefined = complete ? 0 : undefined;
+  let usageAt: number | undefined;
+  let compactionAt: number | undefined;
+  let compactionWindow: number | undefined;
   let compactionUnknown = false;
   let cursor = fromHeader ? 0 : tail.indexOf(10) + 1;
-  if (!fromHeader && cursor === 0) return { complete: false, usage, compactionWindow, compactionUnknown };
+  if (!fromHeader && cursor === 0) return { usage, usageAt, compactionWindow, compactionAt, compactionUnknown };
   for (let end; (end = tail.indexOf(10, cursor)) !== -1; cursor = end + 1) {
     const buffer = tail.subarray(cursor, end);
     const prefix = buffer.subarray(0, 256).toString("utf8");
-    const kind = rolloutPrefix.exec(prefix)?.[1];
-    if (!kind) { complete = false; compactionUnknown = true; continue; }
+    const recordPrefix = rolloutPrefix.exec(prefix)?.groups;
+    if (!recordPrefix) { compactionUnknown = true; usage = undefined; continue; }
+    const { kind, time } = recordPrefix;
     if (kind === "compacted") {
       const window = compactWindow(buffer.toString("utf8"));
       if (window === undefined || !Number.isSafeInteger(window) || window < 1) compactionUnknown = true;
-      else compactionWindow = Math.max(compactionWindow ?? 0, window);
+      else if (compactionWindow !== undefined && (window < compactionWindow || window > compactionWindow + 1)) compactionUnknown = true;
+      else {
+        compactionWindow = window;
+        compactionAt = timestamp(time);
+      }
       continue;
     }
     if (kind !== "event_msg") continue;
     if (prefix.includes('"payload":{"type":"thread_rolled_back"')) {
-      complete = false;
       compactionUnknown = true;
       usage = undefined;
       continue;
     }
     if (!prefix.includes('"payload":{"type":"token_count"')) continue;
-    if (buffer.length > metadataBudget) { complete = false; usage = undefined; continue; }
+    if (buffer.length > metadataBudget) { usage = undefined; continue; }
     try {
       const record = JSON.parse(buffer.toString("utf8"));
       const total = record.payload?.info?.total_token_usage;
-      if (total !== undefined) usage = total;
-    } catch { complete = false; usage = undefined; }
+      if (total !== undefined) {
+        usage = total;
+        usageAt = timestamp(record.timestamp);
+      }
+    } catch { usage = undefined; }
   }
-  return { complete: complete && cursor === tail.length, usage, compactionWindow, compactionUnknown };
+  if (compactionWindow === undefined && fromHeader && sizeStable && cursor === tail.length) compactionWindow = 0;
+  return { usage, usageAt, compactionWindow, compactionAt, compactionUnknown };
+}
+
+function timestamp(value: unknown): number | undefined {
+  const stamp = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isFinite(stamp) && stamp >= 0 ? stamp : undefined;
 }
 
 export async function readCodex(codexHome: string, threadId: string | null, signal: AbortSignal): Promise<Projection> {
@@ -115,7 +129,7 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
       if (newline < 0) return unavailable("waiting");
       const first = header.subarray(0, Math.min(newline, 768)).toString("utf8");
       const meta = rolloutPrefix.exec(first);
-      const id = meta?.[1] === "session_meta" ? sessionIdentity.exec(first.slice(meta[0].length)) : null;
+      const id = meta?.groups?.kind === "session_meta" ? sessionIdentity.exec(first.slice(meta[0].length)) : null;
       if (id?.[1] !== threadId || (id[2] !== undefined && id[2] !== threadId)) return unavailable("unlinked");
 
       // shortcut: search at most 8 MiB for older compactions; use a scoped checkpoint if more history is needed.
@@ -128,10 +142,13 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
         const last = await file.stat();
         if (last.size < stats.size || read.bytesRead !== tail.length) return unavailable("waiting");
         const fromHeader = offset === newline + 1;
-        const { complete, usage, compactionWindow, compactionUnknown } =
+        const { usage, usageAt, compactionWindow, compactionAt, compactionUnknown } =
           scanTail(tail, fromHeader, last.size === stats.size);
         if (budget === tailBudget && !fromHeader && !compactionUnknown && compactionWindow === undefined) continue;
-        return projectCodex({ threadId, complete, usage, compactionWindow: compactionUnknown ? undefined : compactionWindow }, threadId, Date.now());
+        return projectCodex({
+          threadId, usage, usageAt, compactionAt,
+          compactionWindow: compactionUnknown ? undefined : compactionWindow,
+        }, threadId, Date.now());
       }
       return unavailable("no-records");
     } finally { await file.close(); }

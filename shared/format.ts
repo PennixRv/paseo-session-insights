@@ -22,10 +22,10 @@ export function formatMetric(id: MetricId, metric: Metric, summary = false): str
         ? summary ? "<0.01" : amount
         : summary ? Number(amount).toFixed(2) : `${amount.split(".")[0]}.${(amount.split(".")[1] ?? "").padEnd(2, "0")}`;
       if (summary && shown.length > 7 && !shown.startsWith("<")) return `${Number(amount).toExponential(1)}${currency}`;
-      return summary && currency === "USD" ? `${shown}$` : `${shown} ${currency}`;
+      return `${shown} ${currency}`;
     }).join(" · ");
   }
-  if (id === "input" || id === "output") {
+  if (id === "input" || id === "output" || id === "cachedInput") {
     const millions = value / 1e6;
     if (value > 0 && millions < 0.005) return summary ? "<.01M" : `${value.toLocaleString("en-US")} tokens`;
     if (!summary) return `${millions.toFixed(2)}M`;
@@ -40,12 +40,7 @@ export function formatMetric(id: MetricId, metric: Metric, summary = false): str
   if (id === "ttft") return value < 1 ? value === 0 ? "0ms" : "<1ms" : value < 1000 ? `${Math.round(value)}ms` : `${Number((value / 1000).toFixed(1))}s`;
   if (id === "tps") {
     const rate = value > 0 && value < 0.01 ? "<0.01" : String(Number(value.toPrecision(3)));
-    return `${rate}${summary ? "t/s" : " tok/s"}`;
+    return `${rate} tok/s`;
   }
   return summary ? compact(value) : String(value);
-}
-
-export function formatSidebarMetric(id: MetricId, reading: Metric) {
-  const value = formatMetric(id, reading, true);
-  return reading.state === "partial" ? `${value}*` : reading.state === "stale" ? `${value}~` : value;
 }
