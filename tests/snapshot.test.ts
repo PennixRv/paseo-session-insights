@@ -17,7 +17,7 @@ test("both surfaces keep the same 16 metrics, units and groups", () => {
   const fixture = snapshotSchema.parse(fixtureSnapshot(100));
   assert.deepEqual(detailGroups.flatMap(group => [...group.ids]), [...metricIds]);
   assert.deepEqual(metricIds.map(id => formatMetric(id, fixture.metrics[id], true)),
-    ["25.9M", "1.34M", "22.5M", "87%", "12", "4.28 USD", "1.2s", "46 tok/s", "3", "1", "12", "2", "2", "1", "0", "1"]);
+    ["25.90M", "1.34M", "22.53M", "87%", "12", "4.28 USD", "1.2s", "46 tok/s", "3", "1", "12", "2", "2", "1", "0", "1"]);
   assert.equal(formatMetric("cost", { state: "partial", value: [{ amount: "2.34", currency: "CRED" }] }, true), "2.34 CRED");
   assert.equal(formatMetric("input", fixture.metrics.input), "25.90M");
   assert.equal(formatMetric("cache", fixture.metrics.cache), "87.00%");
@@ -35,7 +35,10 @@ test("formatter distinguishes missing, tiny values and zero", () => {
   assert.equal(formatMetric("cost", credits.metrics.cost, true), "0.50 CRED");
   assert.equal(formatMetric("cost", credits.metrics.cost), "0.5000000014 CRED");
   assert.equal(formatMetric("cache", { state: "ready", value: 99.999 }, true), ">99.99%");
-  assert.equal(formatMetric("input", { state: "ready", value: 50 }, true), "<.01M");
+  assert.equal(formatMetric("input", { state: "ready", value: 50 }, true), "<0.01M");
+  assert.equal(formatMetric("input", { state: "ready", value: 251_070_000 }, true), "251.07M");
+  assert.equal(formatMetric("output", { state: "ready", value: 0 }, true), "0.00M");
+  assert.equal(formatMetric("cachedInput", { state: "ready", value: 10_000_000_000 }, true), "10000.00M");
   assert.equal(formatMetric("cost", { state: "partial", value: [{ currency: "USD", amount: "1.23" }, { currency: "EUR", amount: "2" }] }, true), "多币种");
   assert.equal(targetSchema.safeParse({ workspaceId: "w", agentId: "a", threadId: "untrusted" }).success, false);
   const invalid = emptySnapshot("waiting");

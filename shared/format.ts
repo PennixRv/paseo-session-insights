@@ -27,10 +27,8 @@ export function formatMetric(id: MetricId, metric: Metric, summary = false): str
   }
   if (id === "input" || id === "output" || id === "cachedInput") {
     const millions = value / 1e6;
-    if (value > 0 && millions < 0.005) return summary ? "<.01M" : `${value.toLocaleString("en-US")} tokens`;
-    if (!summary) return `${millions.toFixed(2)}M`;
-    if (millions >= 10000) return compact(value);
-    return `${Number(millions.toFixed(millions >= 10 ? millions >= 100 ? 0 : 1 : 2))}M`;
+    if (value > 0 && millions < 0.005) return summary ? "<0.01M" : `${value.toLocaleString("en-US")} tokens`;
+    return `${millions.toFixed(2)}M`;
   }
   if (id === "cache") {
     if (value > 0 && value < 0.005) return "<0.01%";
