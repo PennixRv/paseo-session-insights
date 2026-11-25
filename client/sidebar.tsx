@@ -10,7 +10,7 @@ import type { InsightSession } from "./session.ts";
 const shortLabels = {
   input: "输入", output: "输出", cachedInput: "缓存输入", cache: "缓存率", compactions: "压缩", cost: "已结算",
   ttft: "首 token", tps: "输出速率", planning: "规划", inProgress: "进行", completed: "完成", cancelled: "取消",
-  working: "执行", idle: "空闲", error: "出错", ended: "最近结束",
+  working: "执行", idle: "空闲", error: "出错", ended: labels.ended,
 } satisfies Record<MetricId, string>;
 
 export function SidebarMetrics({
@@ -62,10 +62,10 @@ export function SidebarMetrics({
     <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Text testID="insights-sidebar-title" accessibilityRole="header" numberOfLines={1}
-          style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15, fontWeight: "500" }}>{title}</Text>
+          style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15, fontWeight: "400" }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
           style={{ minHeight: layout.compact ? 44 : 24, minWidth: 44, alignItems: "flex-end", justifyContent: "center" }}>
-          <Text style={{ color: accent, fontSize: 15, fontWeight: "500" }}>详情</Text>
+          <Text style={{ color: accent, fontSize: 15, fontWeight: "400" }}>详情</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
