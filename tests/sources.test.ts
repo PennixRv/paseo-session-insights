@@ -172,8 +172,7 @@ test("Codex advances bounded history through long appends and rechecks a replace
     await writeFile(path, header + event("compacted", { window_number: 1 }) + filler + usage);
     const first = await read();
     assert.equal(first.input && "value" in first.input && first.input.value, 200);
-    assert.equal(count(first), "no-records");
-    assert.equal(count(await read()), 1);
+    assert.equal(count(first), 1);
     const second = event("compacted", { window_number: 2, note: "合成" });
     await appendFile(path, second.slice(0, -3));
     assert.equal(count(await read()), 1);

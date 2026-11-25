@@ -123,6 +123,31 @@ test("visible sessions poll while running, settle once and pause when idle or hi
   session.dispose();
 });
 
+test("manual refresh immediately starts one read even just after an automatic refresh", async () => {
+  const response = deferred<ReturnType<typeof fixtureSnapshot>>();
+  let reads = 0;
+  const session = createSession(() => ++reads === 1 ? Promise.resolve(fixtureSnapshot(1)) : response.promise,
+    () => 1_000);
+  session.setForeground(true);
+  const detach = session.attach();
+  try {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    assert.equal(session.current().metrics.input.observedAt, 1);
+    const pending = session.refresh();
+    assert.equal(session.status().reading, true);
+    assert.equal(session.refresh(), pending);
+    await Promise.resolve();
+    assert.equal(reads, 2);
+    response.resolve(fixtureSnapshot(2));
+    await pending;
+    assert.equal(session.current().metrics.input.observedAt, 2);
+    assert.equal(session.status().reading, false);
+  } finally {
+    detach();
+    session.dispose();
+  }
+});
+
 test("details continue billing at the allowed interval and stop at end, close, background or thread change", async ({ mock }) => {
   mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
   const reads: number[] = [];
@@ -145,8 +170,6 @@ test("details continue billing at the allowed interval and stop at end, close, b
   const detach = session.attach();
   await tick(0);
   assert.deepEqual(session.status(), { running: false, continuing: false, reading: false });
-  await session.refresh();
-  assert.equal(reads.length, 1);
   session.continueBilling();
   rateLimited = true;
   await tick(15_000);

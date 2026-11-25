@@ -38,7 +38,7 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
 
   function refresh(automatic = false): Promise<void> {
     if (inFlight) return inFlight;
-    if (disposed || (automatic && !visible()) || clock() < nextReadAt) return Promise.resolve();
+    if (disposed || (automatic && (!visible() || clock() < nextReadAt))) return Promise.resolve();
     const expected = generation;
     clearTimeout(timer);
     const request = Promise.resolve().then(async () => {

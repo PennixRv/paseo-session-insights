@@ -8,7 +8,8 @@ import { projectCodex } from "./usage.ts";
 const ids = ["input", "output", "cachedInput", "cache", "compactions"] as const;
 const headerBudget = 64 * 1024;
 const tailBudget = 2 * 1024 * 1024;
-const compactionTailBudget = 8 * 1024 * 1024;
+const historyChunkBytes = 8 * 1024 * 1024;
+const historyReadBudget = 64 * 1024 * 1024;
 const metadataBudget = 32 * 1024;
 const rolloutPrefix = /^\{"timestamp":"(?<time>[^"\\]{1,80})",(?:"ordinal":\d+,)?"type":"(?<kind>[a-z_]+)","payload":/;
 const sessionIdentity = /^\{(?:"(?:account_scoped|creator_user_id|creator_account_id)":(?:true|false|null|"[^"\\]{0,128}"),)*"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})"(?:(?:,"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})")|(?=,|}))/;
@@ -169,15 +170,24 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
         (previous.size !== stats.size || (previous.modified === stats.mtimeMs && previous.changed === stats.ctimeMs)) &&
         previous.boundary === await boundaryAt(previous.offset);
       const state = resume ? { ...previous.state } : {};
-      const offset = resume ? previous.offset : newline + 1;
-      // shortcut: one record over the budget stops history verification; use a streaming record scanner if observed.
-      const forward = await readAt(offset, Math.min(stats.size - offset, compactionTailBudget));
-      if (!forward) return unavailable("waiting");
-      const consumed = scanRecords(forward, 0, state);
-      const verifiedOffset = offset + consumed;
+      let verifiedOffset = resume ? previous.offset : newline + 1;
+      let remaining = historyReadBudget;
+      let reachedEnd = verifiedOffset === stats.size;
+      while (!reachedEnd && remaining > 0) {
+        if (signal.aborted) return unavailable("error");
+        const length = Math.min(stats.size - verifiedOffset, historyChunkBytes, remaining);
+        const bytes = await readAt(verifiedOffset, length);
+        if (!bytes) return unavailable("waiting");
+        remaining -= length;
+        reachedEnd = verifiedOffset + length === stats.size;
+        const consumed = scanRecords(bytes, 0, state);
+        // shortcut: a record larger than one chunk stalls history verification; stream the record if observed.
+        if (consumed === 0) break;
+        verifiedOffset += consumed;
+      }
       let usage = state.usage;
       let usageAt = state.usageAt;
-      if (offset + forward.length < stats.size) {
+      if (!reachedEnd) {
         // Keep cumulative token readings useful while the earlier history catches up.
         const start = Math.max(newline + 1, stats.size - tailBudget);
         const tail = await readAt(start, stats.size - start);
@@ -200,13 +210,16 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
         checkpoints.set(key, { fileId, offset: verifiedOffset, size: stats.size,
           modified: stats.mtimeMs, changed: stats.ctimeMs, boundary, state });
       }
-      const reachedEnd = offset + forward.length === stats.size;
-      return projectCodex({
+      const result = projectCodex({
         threadId, usage, usageAt, compactionAt: state.compactionAt,
         compactionWindow: reachedEnd && !state.compactionUnknown
           ? state.compactionWindow ?? (verifiedOffset === stats.size && last.size === stats.size ? 0 : undefined)
           : undefined,
       }, threadId, Date.now());
+      if (!reachedEnd && !state.compactionUnknown) {
+        result.compactions = { state: "waiting", source: "codex", basis: "压缩历史待续读" };
+      }
+      return result;
     } finally { await file.close(); }
   } catch (error) {
     if (error instanceof Error && "code" in error) {
