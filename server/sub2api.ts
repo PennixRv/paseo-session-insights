@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHmac } from "node:crypto";
 import { count, type AccountSnapshot } from "../shared/account.ts";
 import { runLifecycle } from "./lifecycle-cchp.ts";
 import { homedir } from "node:os";
@@ -176,7 +177,7 @@ type Cache<T> = { data?: T; checked: number; expires: number; retry: number; sta
 const blank = <T>() => ({ checked: 0, expires: 0, retry: 0, state: "error" } as Cache<T>);
 
 export function createAccountReader(lookup = accountConfig, fetcher = globalThis.fetch, clock = Date.now) {
-  let current: { config: Config; source: ReturnType<typeof bind> } | undefined;
+  let current: { config: Config; source: ReturnType<typeof bind>; binding?: string } | undefined;
   let pendingLookup: Promise<Lookup> | undefined;
 
   function bind(config: Config) {
@@ -262,10 +263,17 @@ export function createAccountReader(lookup = accountConfig, fetcher = globalThis
       return { state: config };
     }
     if (!current || current.config.baseUrl !== config.baseUrl || current.config.accountId !== config.accountId ||
-        current.config.token !== config.token) current = { config, source: bind(config) };
-    if (statusOnly) return { state: "available" };
+        current.config.token !== config.token) {
+      // The client can recognise identical grants without receiving the token or the account address.
+      const binding = createHmac("sha256", config.token)
+        .update(JSON.stringify(["paseo-session-insights/account/v1", new URL(config.baseUrl).origin, config.accountId]))
+        .digest("hex");
+      current = { config, source: bind(config), binding };
+    }
     const selected = current;
+    if (statusOnly) return { state: "available", binding: selected.binding };
     const result = await selected.source(signal);
-    return current === selected && !signal.aborted ? result : { state: "error" };
+    if (current !== selected || signal.aborted) return { state: "error" };
+    return result.state === "enabled" || result.state === "forbidden" ? { ...result, binding: selected.binding } : result;
   };
 }

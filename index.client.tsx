@@ -1,9 +1,9 @@
-import { useAgent, useComposers, useRpc, useWorkspace, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { useAgent, useComposers, useWorkspace, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { Pressable, Text, View } from "react-native";
 import { AccountMetrics, accountTitle, useAccount } from "./client/account.tsx";
-import { createAccountView, type AccountView } from "./client/account-state.ts";
+import { accountCache } from "./client/account-state.ts";
 import { findFocusedAgent } from "./client/focus.ts";
 import { createSession, type InsightSession } from "./client/session.ts";
 import { SidebarMetrics } from "./client/sidebar.tsx";
@@ -15,7 +15,8 @@ export default function contribute(client: PluginClientContext) {
   const entries = new Map<string, Target & {
     session: InsightSession; runtimeId: string | null;
   }>();
-  const accountViews = new Map<string, AccountView>();
+  const accountView = accountCache.attach(statusOnly => client.rpc(accountRpc, statusOnly ? { statusOnly: true } : {}));
+  void accountView.probe();
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
@@ -24,20 +25,9 @@ export default function contribute(client: PluginClientContext) {
   const notify = () => { for (const listener of listeners) listener(); };
 
   function Footer(props: PluginSidebarItemProps) {
-    const hostId = props.host.id;
-    let accountView = accountViews.get(hostId);
-    if (!accountView) {
-      accountView = createAccountView(lifetime.signal);
-      accountViews.set(hostId, accountView);
-    }
-    return <HostFooter key={hostId} {...props} accountView={accountView} />;
-  }
-
-  function HostFooter({ accountView, ...props }: PluginSidebarItemProps & { accountView: AccountView }) {
-    const [showAccount, setShowAccount] = useState(accountView.showAccount);
+    const showAccount = useSyncExternalStore(accountView.subscribe, () => accountView.showAccount);
     const compact = props.layout.compact || props.layout.platform !== "web";
-    const readAccount = useRpc(accountRpc);
-    const account = useAccount(accountView, statusOnly => readAccount(statusOnly ? { statusOnly: true } : {}), !compact || showAccount);
+    const account = useAccount(accountView, !compact || showAccount);
     const enabled = account !== undefined && account.state !== "disabled";
     const [focused] = useComposers({ focused: true });
     const entry = useSyncExternalStore(subscribe, () => {
@@ -55,7 +45,6 @@ export default function contribute(client: PluginClientContext) {
       accessibilityRole="button" accessibilityLabel={accountVisible ? "切换到会话指标" : "切换到账号指标"}
       onPress={() => {
         accountView.showAccount = !accountVisible;
-        setShowAccount(accountView.showAccount);
       }}
       style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center" }}>
       <Icon name="ArrowLeftRight" size={18} color={props.theme.colors.accent} />
@@ -140,7 +129,7 @@ export default function contribute(client: PluginClientContext) {
   });
   return () => {
     lifetime.abort();
-    accountViews.clear();
+    accountView.dispose();
     unregisterFooter();
     for (const id of entries.keys()) remove(id);
     notify();

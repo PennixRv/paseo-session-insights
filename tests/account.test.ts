@@ -37,7 +37,8 @@ test("projects only display fields and deduplicates queries across clients", asy
       credentials: { subscription_expires_at: "2026-12-18", email: "fixture-private" } });
     return json(stats(Number(url.searchParams.get("days")), url.searchParams.get("days") === "1"));
   }, () => start);
-  assert.deepEqual(await reader(signal, true), { state: "available" });
+  const status = await reader(signal, true);
+  assert(status.state === "available" && status.binding?.length === 64);
   assert.equal(paths.length, 0);
   const [a, b] = await Promise.all([reader(signal), reader(signal)]);
   assert.deepEqual(a, b);
@@ -45,6 +46,7 @@ test("projects only display fields and deduplicates queries across clients", asy
   const result = accountRpc.output.parse(a);
   assert.equal(result.state, "enabled");
   if (result.state !== "enabled") throw Error("expected enabled");
+  assert.equal(result.binding, status.binding);
   assert.equal(result.quota.data?.window?.used, 42.37);
   assert.deepEqual(result.quota.data?.cards, { count: 2, earliest: null, incomplete: true });
   assert.equal(result.subscription.data, "2026-12-18");
@@ -76,10 +78,13 @@ test("drops previous statistics after Shanghai midnight, and all readings on den
   assert(midnight.state === "enabled" && midnight.today.state === "error" && !midnight.today.data && !midnight.week.data);
   failure = 403;
   now += 61_000;
-  assert.deepEqual(await reader(signal), { state: "forbidden" });
+  const denied = await reader(signal);
+  assert.equal(denied.state, "forbidden");
   selected = { ...settings, accountId: 18, token: "adm_sc_new_synthetic" };
   failure = 0;
-  assert.deepEqual(await reader(signal), { state: "forbidden" });
+  const rebound = await reader(signal);
+  assert(rebound.state === "forbidden" && denied.state === "forbidden");
+  assert.notEqual(rebound.binding, denied.binding);
 });
 
 test("honors Retry-After across slots while responses are bounded", async () => {

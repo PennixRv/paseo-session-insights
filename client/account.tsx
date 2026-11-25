@@ -1,15 +1,13 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { AppState, Text, View, useWindowDimensions } from "react-native";
 import type { AccountSnapshot } from "../shared/account.ts";
 import { formatAccountTime, formatMetric } from "../shared/format.ts";
 import { labels } from "../shared/metrics.ts";
 import type { AccountView } from "./account-state.ts";
 
-export function useAccount(view: AccountView, read: (statusOnly: boolean) => Promise<AccountSnapshot>, visible: boolean) {
-  const [reading, setReading] = useState(view.snapshot);
-  const readRef = useRef(read);
-  readRef.current = read;
+export function useAccount(view: AccountView, visible: boolean) {
+  const reading = useSyncExternalStore(view.subscribe, view.snapshot);
   useEffect(() => {
     let active = true;
     let pending = false;
@@ -19,8 +17,7 @@ export function useAccount(view: AccountView, read: (statusOnly: boolean) => Pro
       if (!active || !foreground || pending) return;
       pending = true;
       try {
-        const result = await view.refresh(readRef.current, !visible);
-        if (active && foreground) setReading(result);
+        await view.refresh(!visible);
       } finally {
         pending = false;
         if (active && foreground) timer = setTimeout(() => { void refresh(); }, view.refreshDelay());
@@ -29,10 +26,7 @@ export function useAccount(view: AccountView, read: (statusOnly: boolean) => Pro
     const subscription = AppState.addEventListener("change", state => {
       foreground = state === "active";
       clearTimeout(timer);
-      if (foreground) {
-        setReading(view.snapshot());
-        void refresh();
-      }
+      if (foreground) void refresh();
     });
     void refresh();
     return () => {

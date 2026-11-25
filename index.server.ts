@@ -15,14 +15,15 @@ export default function contribute(server: PluginServerContext) {
   const readLocal = createLifecycleLocalReader();
   const lifetime = new AbortController();
   const readAccount = createAccountReader();
+  const fixtureBinding = "a".repeat(64);
   server.handle(accountRpc, ({ statusOnly }): AccountSnapshot | Promise<AccountSnapshot> => fixture && !statusOnly ? {
-    state: "enabled",
+    state: "enabled", binding: fixtureBinding,
     quota: { state: "ready", data: { window: { used: 42.37, resetAt: Math.floor(Date.now() / 1000) + 86400 },
       cards: { count: 2, earliest: "2026-12-08T10:16:00+08:00", incomplete: false } } },
     subscription: { state: "ready", data: "2026-12-18T10:16:00+08:00" },
     today: { state: "ready", data: { tokens: 8_200_000, cost: 2.34, requests: 128, cache: 96.4 } },
     week: { state: "ready", data: { tokens: 45_600_000, cost: 18.7, requests: 830, cache: 94.21 } },
-  } : fixture ? { state: "available" } : readAccount(lifetime.signal, statusOnly));
+  } : fixture ? { state: "available", binding: fixtureBinding } : readAccount(lifetime.signal, statusOnly));
   const progress = new Map<string, { expires: number; read: ReturnType<typeof readProgress> }>();
   const run: Parameters<typeof readProgress>[1] = (args, cwd, timeout) => runTrellis(args, cwd, timeout, lifetime.signal);
   function projectProgress(root: string) {
