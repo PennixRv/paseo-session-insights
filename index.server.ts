@@ -5,6 +5,8 @@ import { readCodex } from "./server/codex.ts";
 import { fixtureSnapshot } from "./server/fixture.ts";
 import { createSnapshotHandler } from "./server/snapshot.ts";
 import { readProgress, readTeamwork, runTrellis } from "./server/workflow.ts";
+import { createAccountReader } from "./server/sub2api.ts";
+import { accountRpc, type AccountSnapshot } from "./shared/account.ts";
 
 export default function contribute(server: PluginServerContext) {
   const fixture = process.env.PASEO_SESSION_INSIGHTS_FIXTURE === "1";
@@ -12,6 +14,15 @@ export default function contribute(server: PluginServerContext) {
   const readCchp = createLifecycleCchpReader();
   const readLocal = createLifecycleLocalReader();
   const lifetime = new AbortController();
+  const readAccount = createAccountReader();
+  server.handle(accountRpc, ({ statusOnly }): AccountSnapshot | Promise<AccountSnapshot> => fixture && !statusOnly ? {
+    state: "enabled",
+    quota: { state: "ready", data: { window: { used: 42, resetAt: Math.floor(Date.now() / 1000) + 86400 },
+      cards: { count: 2, earliest: "2026-12-08", incomplete: false } } },
+    subscription: { state: "ready", data: "2026-12-18" },
+    today: { state: "ready", data: { tokens: 8_200_000, cost: 2.34, requests: 128, cache: 96.4 } },
+    week: { state: "ready", data: { tokens: 45_600_000, cost: 18.7, requests: 830, cache: 94.21 } },
+  } : fixture ? { state: "available" } : readAccount(lifetime.signal, statusOnly));
   const progress = new Map<string, { expires: number; read: ReturnType<typeof readProgress> }>();
   const run: Parameters<typeof readProgress>[1] = (args, cwd, timeout) => runTrellis(args, cwd, timeout, lifetime.signal);
   function projectProgress(root: string) {

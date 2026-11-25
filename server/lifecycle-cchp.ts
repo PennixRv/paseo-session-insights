@@ -14,7 +14,7 @@ type GatewayConfig = z.infer<typeof configSchema>;
 const run = promisify(execFile);
 
 const paseoHome = () => resolve(process.env.PASEO_HOME || join(homedir(), ".paseo"));
-async function runLifecycle(args: string[], signal: AbortSignal, maxBuffer: number) {
+export async function runLifecycle(args: string[], signal: AbortSignal, maxBuffer: number) {
   const config = process.env.PASEO_SESSION_INSIGHTS_LIFECYCLE_CONFIG;
   if (config) {
     if (!isAbsolute(config)) throw new Error("Lifecycle config must be absolute");

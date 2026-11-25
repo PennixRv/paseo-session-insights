@@ -1,6 +1,8 @@
 # Paseo 会话指标
 
-桌面和手机都在左侧边栏底部随当前 Codex 会话显示 16 项指标。累计缓存输入已包含在累计输入中。Trellis 显示规划、进行、完成和取消四种任务计数。点「详情」可查看 Codex 会话 ID、指标来源、采样时间和覆盖状态。左栏条目可在 Paseo 的「设置 → 侧边栏」中管理。
+桌面和手机都在左侧边栏底部随当前 Codex 会话显示 16 项指标。累计缓存输入已包含在累计输入中。Trellis 显示规划、进行、完成和取消四种任务计数。工作区名右侧的列表图标打开会话详情，可查看 Codex 会话 ID、指标来源、采样时间和覆盖状态。详情中「本会话」右侧的圆形箭头手动刷新。左栏条目可在 Paseo 的「设置 → 侧边栏」中管理。
+
+启用 Sub2API 后，桌面在会话指标上方显示「ChatGPT Status」。手机默认显示会话指标，通过最右侧的双向箭头切换。账号区展示七天用量窗口、重置时间、重置卡、订阅到期，以及今日和近七个自然日的 Token 消耗、账号计费、请求数和输入缓存命中率。
 
 侧栏可见且当前会话运行时，插件每 15 秒自动刷新。轮次结束后至少等 5 秒补读一次，再保留读数并暂停轮询。切回会话时会读取一次，详情仍可手动刷新。
 
@@ -32,6 +34,8 @@ npm pack --dry-run
 | `PASEO_SESSION_INSIGHTS_LIFECYCLE_CONFIG` | Lifecycle 使用非默认 `workflow.config` 时，设为该配置的绝对路径。 |
 
 CCHP 读取需要包含本插件接入的 Pennix Lifecycle 版本。使用 `pennix config edit` 在 Paseo 配置中启用会话指标 CCHP 取数，填写控制面 HTTPS 地址及该 Codex 推理密钥的 ID。运行 `pennix secrets edit`，在 `[cchp]` 下写入组织范围内具有 `usage:read` 的 `usage_token`。默认秘密文件为 `~/.config/pennix/secrets.toml`。运行 `pennix secrets check` 核对字段完整性。插件服务端通过 Lifecycle 私有管道读取配置和令牌，同一 daemon 的客户端共享指标结果。
+
+Sub2API 依赖 Pennix Lifecycle `0.3.45` 或更新版本。使用 `pennix config edit` 开启会话指标 Sub2API 取数，填写控制面 HTTPS 源地址和目标 OpenAI OAuth 账号 ID。在 `pennix secrets edit` 中将原生受限管理员 Key 写入 `[sub2api]` 的 `account_read_key`。将 `openai.quota.read`、`accounts.stats.read`、`accounts.read` 和 `accounts.identity.read` 限定在目标 OpenAI OAuth 账号的分组内。Sub2API `0.2.23` 的账号详情入口会先检查 `accounts.read`，再按 `accounts.identity.read` 返回订阅到期。今日和近七天统计按 Sub2API 的 `Asia/Shanghai` 自然日计算，账号计费用 `USD` 显示。
 
 Codex 本地适配以 `threads` 索引和活动 JSONL 会话为基线。压缩历史分批读取，读取进度保存在 daemon 内存中。长日志在首次打开或 daemon 重启后可能需要多次刷新才能核对完整。Teamwork 按当前 Codex 会话的精确 owner 查询各项目及全局频道，Trellis 任务计数仍以当前工作区为准。
 

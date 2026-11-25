@@ -1,6 +1,6 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { Modal } from "@getpaseo/plugin/client/ui";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { Icon, Modal } from "@getpaseo/plugin/client/ui";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AppState, Pressable, Text, View } from "react-native";
 import { formatMetric, stateLabels } from "../shared/format.ts";
 import { detailGroups, labels, type MetricId } from "../shared/metrics.ts";
@@ -14,9 +14,9 @@ const shortLabels = {
 } satisfies Record<MetricId, string>;
 
 export function SidebarMetrics({
-  theme, layout, session, title, codexSessionId,
+  theme, layout, session, title, codexSessionId, trailing,
 }: Pick<PluginSidebarItemProps, "theme" | "layout"> & {
-  session: InsightSession; title: string | null; codexSessionId: string | null;
+  session: InsightSession; title: string | null; codexSessionId: string | null; trailing?: ReactNode;
 }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const [open, setOpen] = useState(false);
@@ -63,10 +63,15 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Text testID="insights-sidebar-title" accessibilityRole="header" numberOfLines={1}
           style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15, fontWeight: "400" }}>{title}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
-          style={{ minHeight: layout.compact ? 44 : 24, minWidth: 44, alignItems: "flex-end", justifyContent: "center" }}>
-          <Text style={{ color: accent, fontSize: 14, fontWeight: "400" }}>详情</Text>
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Pressable testID="insights-sidebar-details" accessibilityRole="button" accessibilityLabel="会话详情" onPress={() => setOpen(true)}
+            style={{ width: layout.compact || layout.platform !== "web" ? 48 : 36,
+              height: layout.compact || layout.platform !== "web" ? 48 : 32,
+              alignItems: "center", justifyContent: "center" }}>
+            <Icon name="List" size={18} color={accent} />
+          </Pressable>
+          {trailing}
+        </View>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
         {sessionRows.map((id, index) => (

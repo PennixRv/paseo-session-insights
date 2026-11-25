@@ -1,9 +1,13 @@
-import { useAgent, useComposers, useWorkspace, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { useSyncExternalStore } from "react";
+import { useAgent, useComposers, useRpc, useWorkspace, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { Icon } from "@getpaseo/plugin/client/ui";
+import { useState, useSyncExternalStore } from "react";
+import { Pressable, Text, View } from "react-native";
+import { AccountMetrics, accountTitle, useAccount } from "./client/account.tsx";
 import { findFocusedAgent } from "./client/focus.ts";
 import { createSession, type InsightSession } from "./client/session.ts";
 import { SidebarMetrics } from "./client/sidebar.tsx";
 import { insightsRpc, type Target } from "./shared/metrics.ts";
+import { accountRpc } from "./shared/account.ts";
 
 export default function contribute(client: PluginClientContext) {
   const lifetime = new AbortController();
@@ -18,6 +22,15 @@ export default function contribute(client: PluginClientContext) {
   const notify = () => { for (const listener of listeners) listener(); };
 
   function Footer(props: PluginSidebarItemProps) {
+    return <HostFooter key={props.host.id} {...props} />;
+  }
+
+  function HostFooter(props: PluginSidebarItemProps) {
+    const [showAccount, setShowAccount] = useState(false);
+    const compact = props.layout.compact || props.layout.platform !== "web";
+    const readAccount = useRpc(accountRpc);
+    const account = useAccount(statusOnly => readAccount(statusOnly ? { statusOnly: true } : {}), !compact || showAccount);
+    const enabled = account !== undefined && account.state !== "disabled";
     const [focused] = useComposers({ focused: true });
     const entry = useSyncExternalStore(subscribe, () => {
       if (!focused) return null;
@@ -26,9 +39,35 @@ export default function contribute(client: PluginClientContext) {
     });
     const agent = useAgent(entry?.agentId ?? "");
     const workspaceName = useWorkspace(agent?.workspace ?? "", workspace => workspace.title?.trim() || workspace.name);
-    if (!entry || !agent || agent.hostId !== props.host.id || agent.workspaceId !== entry.workspaceId) return null;
-    return <SidebarMetrics key={agent.ref.key} {...props} title={workspaceName}
-      session={entry.session} codexSessionId={entry.runtimeId} />;
+    const hasSession = !!entry && !!agent && agent.hostId === props.host.id && agent.workspaceId === entry.workspaceId;
+    if (!hasSession && !enabled) return null;
+    const accountVisible = enabled && (!compact || showAccount);
+    const sessionVisible = !compact || !accountVisible;
+    const switcher = compact && enabled && <Pressable testID="insights-account-toggle"
+      accessibilityRole="button" accessibilityLabel={accountVisible ? "切换到会话指标" : "切换到账号指标"}
+      onPress={() => setShowAccount(!accountVisible)}
+      style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center" }}>
+      <Icon name="ArrowLeftRight" size={18} color={props.theme.colors.accent} />
+    </Pressable>;
+    return <>
+      {accountVisible && <View style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <Text accessibilityRole="header" style={{ color: props.theme.colors.foreground, fontSize: 15, fontWeight: "400" }}>{accountTitle}</Text>
+          {switcher}
+        </View>
+        <AccountMetrics {...props} reading={account} />
+      </View>}
+      {sessionVisible && hasSession && <>
+        {accountVisible && <View style={{ height: 1, backgroundColor: props.theme.colors.border }} />}
+        <SidebarMetrics key={agent.ref.key} {...props} title={workspaceName}
+          session={entry.session} codexSessionId={entry.runtimeId} trailing={switcher} />
+      </>}
+      {sessionVisible && !hasSession && compact && enabled && <View
+        style={{ paddingLeft: 8, paddingRight: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ color: props.theme.colors.foregroundMuted, fontSize: 14 }}>没有当前会话</Text>
+        {switcher}
+      </View>}
+    </>;
   }
 
   const unregisterFooter = client.addSidebarFooterItem({

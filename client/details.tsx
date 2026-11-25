@@ -1,5 +1,5 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { copyText, useToast } from "@getpaseo/plugin/client/ui";
+import { copyText, Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useSyncExternalStore } from "react";
 import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import { formatMetric, stateLabels } from "../shared/format.ts";
@@ -66,8 +66,10 @@ export function Details({
               <Pressable testID="insights-details-refresh" accessibilityRole="button"
                 accessibilityState={{ busy: reading, disabled: reading }} disabled={reading}
                 onPress={() => { void session.refresh(); }}
-                style={{ flexShrink: 0, paddingHorizontal: 4, minHeight: 44, justifyContent: "center" }}>
-                <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "500" }}>{reading ? "正在读取" : "刷新"}</Text>
+                accessibilityLabel="刷新会话指标"
+                style={{ flexShrink: 0, minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center",
+                  opacity: reading ? 0.55 : 1 }}>
+                <Icon name="RefreshCw" size={18} color={colors.accent} />
               </Pressable>
             )}
           </View>
