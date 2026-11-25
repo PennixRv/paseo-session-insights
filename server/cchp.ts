@@ -41,6 +41,15 @@ class GatewayError extends Error {
   }
 }
 
+class GatewayUnavailable extends Error {}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof TypeError) || !(error.cause instanceof Error)) return false;
+  const cause = error.cause as Error & { code?: string };
+  return /^(?:EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|ECONNREFUSED|UND_ERR_(?:SOCKET|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT))$/
+    .test(cause.code ?? "");
+}
+
 function readCharge(row: z.infer<typeof rowSchema>, threadId: string): Charge {
   const id = row.requestId;
   const units = integer.safeParse(row.adjustedCostUnits ?? row.costUnits);
@@ -140,11 +149,13 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
                 retryAt = Math.min(8_640_000_000_000_000, clock() + Math.max(1000, millis));
                 throw new GatewayError("rate-limited");
               }
+              if (response.status >= 500) throw new GatewayUnavailable();
               throw new GatewayError("error");
             }
             page = pageSchema.parse(await boundedJson(response)).page;
           } catch (error) {
             if (!(error instanceof GatewayError) && signal.aborted && !lifetime.aborted) break;
+            if (isNetworkFailure(error)) throw new GatewayUnavailable();
             throw error;
           }
           for (const row of page.items) {
@@ -224,6 +235,25 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
         ? { ...last, state: "stale" as const, hasMoreBilling: true as const, basis: "显示上次核对的金额" }
         : cost };
     } catch (error) {
+      if (error instanceof GatewayUnavailable && !lifetime.aborted) {
+        const observedAt = clock();
+        const last = cached?.metric;
+        const recentCost = last && "value" in last && last.observedAt !== undefined &&
+          observedAt - last.observedAt < 300_000 ? last : undefined;
+        const canResume = Boolean(scan?.cursor && !scan.finished);
+        if (canResume) saveCost({ touchedAt: observedAt, expires: 0, metric: recentCost, scan });
+        const failed = unavailable("error");
+        if (recentCost) return { ...failed, cost: {
+          ...recentCost, state: "stale" as const, basis: "显示上次核对的金额",
+          hasMoreBilling: canResume ? true as const : undefined,
+        } };
+        if (canResume && scan) {
+          const { cost } = projectGateway({ complete: false, requests: [], charges: [...scan.charges.values()] },
+            threadId, observedAt, "cchp");
+          return { ...failed, cost: { ...(cost ?? failed.cost), hasMoreBilling: true as const } };
+        }
+        return failed;
+      }
       const state = error instanceof GatewayError ? error.state : "error";
       if (state === "rate-limited") {
         if (scan) saveCost({ touchedAt: clock(), expires: 0, metric: cached?.metric, scan });

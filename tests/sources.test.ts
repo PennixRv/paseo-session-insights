@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -122,12 +122,18 @@ test("Teamwork filters the owner, de-duplicates workers and preserves partial co
     calls.push(args);
     if (args[1] === "list") {
       assert.ok(args.includes("owner"));
-      if (args[3] === "global") throw new Error("transient");
+      if (args[3] === "global") {
+        assert.ok(!args.includes("--all-projects"));
+        throw new Error("transient");
+      }
+      assert.ok(args.includes("--all-projects"));
       const same = { name: "root", project: "p", ownerSessionId: "owner" };
-      return [same, same, { name: "other", project: "p", ownerSessionId: "other" }];
+      return [same, same, { ...same, project: "other-project" },
+        { name: "other", project: "p", ownerSessionId: "other" }];
     }
     assert.equal(args[2], "root");
     assert.ok(args.includes("--project-key"));
+    if (args.includes("other-project")) return [{ workerId: "a", lifecycle: "starting" }];
     const done = { workerId: "d", lifecycle: "done", updatedAt: new Date(now - 29_000).toISOString() };
     return { items: [
       { workerId: "a", lifecycle: "running", activity: "mid-turn" },
@@ -137,8 +143,50 @@ test("Teamwork filters the owner, de-duplicates workers and preserves partial co
   }, () => now);
   assert.deepEqual(data.ended, { state: "partial", value: 1, source: "teamwork", observedAt: now });
   assert.deepEqual(data.error, { state: "partial", value: 0, source: "teamwork", observedAt: now });
-  assert.equal(calls.filter(args => args[1] === "workers").length, 1);
+  assert.deepEqual(data.working, { state: "partial", value: 2, source: "teamwork", observedAt: now });
+  assert.equal(calls.filter(args => args[1] === "workers").length, 2);
   assert.equal((await readTeamwork("/fixture", "owner", async () => [], () => now)).idle?.state, "ready");
+});
+
+test("Codex advances bounded history through long appends and rechecks a replaced log", async () => {
+  const home = await mkdtemp(join(tmpdir(), "paseo-codex-history-"));
+  try {
+    await mkdir(join(home, "sessions"));
+    const path = join(home, "sessions", "long.jsonl");
+    const threadId = "long-thread";
+    const signal = new AbortController().signal;
+    const event = (type: string, payload: object) =>
+      JSON.stringify({ timestamp: "2026-11-24T01:30:00Z", type, payload }) + "\n";
+    const db = new DatabaseSync(join(home, "state_5.sqlite"));
+    try {
+      db.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, archived INT)");
+      db.prepare("INSERT INTO threads VALUES (?, ?, 0)").run(threadId, path);
+    } finally { db.close(); }
+    const header = event("session_meta", { id: threadId });
+    const usage = event("event_msg", { type: "token_count",
+      info: { total_token_usage: { input_tokens: 200, output_tokens: 30, cached_input_tokens: 100 } } });
+    const filler = event("response_item", { text: "x".repeat(40 * 1024) }).repeat(210);
+    const read = () => readCodex(home, threadId, signal);
+    const count = (projection: Awaited<ReturnType<typeof read>>) =>
+      projection.compactions && ("value" in projection.compactions ? projection.compactions.value : projection.compactions.state);
+    await writeFile(path, header + event("compacted", { window_number: 1 }) + filler + usage);
+    const first = await read();
+    assert.equal(first.input && "value" in first.input && first.input.value, 200);
+    assert.equal(count(first), "no-records");
+    assert.equal(count(await read()), 1);
+    const second = event("compacted", { window_number: 2, note: "合成" });
+    await appendFile(path, second.slice(0, -3));
+    assert.equal(count(await read()), 1);
+    await appendFile(path, second.slice(-3));
+    assert.equal(count(await read()), 2);
+    await appendFile(path, event("event_msg", { type: "thread_rolled_back" }) + filler + usage);
+    assert.equal(count(await read()), "no-records");
+    assert.equal(count(await read()), "no-records");
+    const replacement = join(home, "sessions", "replacement.jsonl");
+    await writeFile(replacement, header + usage);
+    await rename(replacement, path);
+    assert.equal(count(await read()), 0);
+  } finally { await rm(home, { recursive: true }); }
 });
 
 test("Codex adapter follows only the indexed thread and projects known metadata", async () => {
@@ -280,7 +328,7 @@ test("CCHP totals the session beyond three pages and refreshes performance betwe
   assert.deepEqual(second.cost, first.cost);
   assert.equal("value" in second.ttft! && second.ttft.value, clock);
   assert.equal(second.ttft?.state, "ready");
-  assert.equal(second.tps && "basis" in second.tps && second.tps.basis, "最近 3 条请求中最近完成 · 按首字节计时");
+  assert.equal(second.tps && "basis" in second.tps && second.tps.basis, "最近 3 条请求中最近完成");
   clock += 45_000;
   const next = await read("thread", signal);
   assert.equal(next.cost && "observedAt" in next.cost && next.cost.observedAt, clock);
@@ -349,4 +397,42 @@ test("CCHP ends pagination on the final page while the amount stays partial", as
   const { cost } = await reader("thread", new AbortController().signal);
   assert.deepEqual(cost, { source: "cchp", observedAt: 2, state: "partial",
     value: [{ currency: "CRED", amount: "2.5" }] });
+});
+
+test("CCHP resumes validated pages after server and transport failures but discards them on denial", async () => {
+  const pages: string[] = [];
+  let attempt = 0;
+  const signal = new AbortController().signal;
+  const reader = createCchpReader({ baseUrl: "https://gateway.invalid", token: "fixture", apiKeyId: "key1" },
+    async input => {
+      const url = new URL(String(input));
+      const cursor = url.searchParams.get("cursor");
+      if (!url.searchParams.has("end")) return Response.json({ page: { nextCursor: null, items: [] } });
+      pages.push(cursor ?? "start");
+      if (cursor) {
+        attempt++;
+        if (attempt === 1) return new Response(null, { status: 503 });
+        if (attempt === 2) throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("socket closed"), { code: "UND_ERR_SOCKET" }),
+        });
+        if (attempt === 3) return new Response(null, { status: 403 });
+      }
+      return Response.json({ page: { nextCursor: cursor ? null : "next", items: [{
+        requestId: cursor ?? "start", sessionId: "thread", apiKeyId: "key1", completedAt: new Date(1).toISOString(),
+        adjustedCostUnits: 10_000_000_000, streaming: false,
+      }] } });
+    }, () => 2);
+  for (let i = 0; i < 2; i++) {
+    const { cost } = await reader("thread", signal);
+    assert.equal(cost?.state, "partial");
+    assert.equal(cost.hasMoreBilling, true);
+    assert.deepEqual("value" in cost && cost.value, [{ currency: "CRED", amount: "1" }]);
+  }
+  const denied = (await reader("thread", signal)).cost;
+  assert.deepEqual(denied, { state: "forbidden", source: "cchp" });
+  assert.deepEqual(pages, ["start", "next", "next", "next"]);
+  const complete = (await reader("thread", signal)).cost;
+  assert.deepEqual(complete, { source: "cchp", state: "ready", observedAt: 2,
+    value: [{ amount: "2", currency: "CRED" }] });
+  assert.deepEqual(pages.slice(-2), ["start", "next"]);
 });

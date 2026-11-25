@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { createHash } from "node:crypto";
 import { open, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { Metric, MetricId, Unavailable } from "../shared/metrics.ts";
@@ -12,6 +13,25 @@ const metadataBudget = 32 * 1024;
 const rolloutPrefix = /^\{"timestamp":"(?<time>[^"\\]{1,80})",(?:"ordinal":\d+,)?"type":"(?<kind>[a-z_]+)","payload":/;
 const sessionIdentity = /^\{(?:"(?:account_scoped|creator_user_id|creator_account_id)":(?:true|false|null|"[^"\\]{0,128}"),)*"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})"(?:(?:,"(?:id|session_id)":"([a-zA-Z0-9_-]{1,128})")|(?=,|}))/;
 type Projection = Partial<Record<MetricId, Metric>>;
+type Scan = {
+  usage?: { input_tokens: unknown; output_tokens: unknown; cached_input_tokens: unknown };
+  usageAt?: number;
+  compactionAt?: number;
+  compactionWindow?: number;
+  compactionUnknown?: boolean;
+};
+type Checkpoint = {
+  fileId: string;
+  size: number;
+  modified: number;
+  changed: number;
+  offset: number;
+  boundary: string;
+  state: Scan;
+};
+const checkpoints = new Map<string, Checkpoint>();
+const boundaryBytes = 256;
+const digest = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
 function unavailable(state: Unavailable): Projection {
   return Object.fromEntries(ids.map(id => [id, { state, source: "codex" }]));
@@ -50,49 +70,48 @@ function compactWindow(line: string): number | undefined {
   return undefined;
 }
 
-function scanTail(tail: Buffer, fromHeader: boolean, sizeStable: boolean) {
-  let usage: unknown;
-  let usageAt: number | undefined;
-  let compactionAt: number | undefined;
-  let compactionWindow: number | undefined;
-  let compactionUnknown = false;
-  let cursor = fromHeader ? 0 : tail.indexOf(10) + 1;
-  if (!fromHeader && cursor === 0) return { usage, usageAt, compactionWindow, compactionAt, compactionUnknown };
-  for (let end; (end = tail.indexOf(10, cursor)) !== -1; cursor = end + 1) {
-    const buffer = tail.subarray(cursor, end);
+function scanRecords(bytes: Buffer, cursor: number, state: Scan): number {
+  for (let end; (end = bytes.indexOf(10, cursor)) !== -1; cursor = end + 1) {
+    const buffer = bytes.subarray(cursor, end);
     const prefix = buffer.subarray(0, 256).toString("utf8");
     const recordPrefix = rolloutPrefix.exec(prefix)?.groups;
-    if (!recordPrefix) { compactionUnknown = true; usage = undefined; continue; }
+    if (!recordPrefix) { state.compactionUnknown = true; state.usage = undefined; continue; }
     const { kind, time } = recordPrefix;
     if (kind === "compacted") {
       const window = compactWindow(buffer.toString("utf8"));
-      if (window === undefined || !Number.isSafeInteger(window) || window < 1) compactionUnknown = true;
-      else if (compactionWindow !== undefined && (window < compactionWindow || window > compactionWindow + 1)) compactionUnknown = true;
+      if (window === undefined || !Number.isSafeInteger(window) || window < 1) state.compactionUnknown = true;
+      else if (state.compactionWindow !== undefined &&
+        (window < state.compactionWindow || window > state.compactionWindow + 1)) state.compactionUnknown = true;
       else {
-        compactionWindow = window;
-        compactionAt = timestamp(time);
+        state.compactionWindow = window;
+        state.compactionAt = timestamp(time);
       }
       continue;
     }
     if (kind !== "event_msg") continue;
     if (prefix.includes('"payload":{"type":"thread_rolled_back"')) {
-      compactionUnknown = true;
-      usage = undefined;
+      state.compactionUnknown = true;
+      state.usage = undefined;
       continue;
     }
     if (!prefix.includes('"payload":{"type":"token_count"')) continue;
-    if (buffer.length > metadataBudget) { usage = undefined; continue; }
+    if (buffer.length > metadataBudget) { state.usage = undefined; continue; }
     try {
       const record = JSON.parse(buffer.toString("utf8"));
       const total = record.payload?.info?.total_token_usage;
-      if (total !== undefined) {
-        usage = total;
-        usageAt = timestamp(record.timestamp);
+      if (total && typeof total === "object") {
+        state.usage = {
+          input_tokens: total.input_tokens, output_tokens: total.output_tokens,
+          cached_input_tokens: total.cached_input_tokens,
+        };
+        if (Object.values(state.usage).some(value => typeof value !== "number")) state.usage = undefined;
+        state.usageAt = timestamp(record.timestamp);
+      } else if (total !== undefined) {
+        state.usage = undefined;
       }
-    } catch { usage = undefined; }
+    } catch { state.usage = undefined; }
   }
-  if (compactionWindow === undefined && fromHeader && sizeStable && cursor === tail.length) compactionWindow = 0;
-  return { usage, usageAt, compactionWindow, compactionAt, compactionUnknown };
+  return cursor;
 }
 
 function timestamp(value: unknown): number | undefined {
@@ -132,25 +151,62 @@ export async function readCodex(codexHome: string, threadId: string | null, sign
       const id = meta?.groups?.kind === "session_meta" ? sessionIdentity.exec(first.slice(meta[0].length)) : null;
       if (id?.[1] !== threadId || (id[2] !== undefined && id[2] !== threadId)) return unavailable("unlinked");
 
-      // shortcut: search at most 8 MiB for older compactions; use a scoped checkpoint if more history is needed.
-      for (const budget of [tailBudget, compactionTailBudget]) {
-        if (signal.aborted) return unavailable("error");
-        const offset = Math.max(newline + 1, stats.size - budget);
-        const tail = Buffer.alloc(stats.size - offset);
-        const read = await file.read(tail, 0, tail.length, offset);
-        if (signal.aborted) return unavailable("error");
-        const last = await file.stat();
-        if (last.size < stats.size || read.bytesRead !== tail.length) return unavailable("waiting");
-        const fromHeader = offset === newline + 1;
-        const { usage, usageAt, compactionWindow, compactionAt, compactionUnknown } =
-          scanTail(tail, fromHeader, last.size === stats.size);
-        if (budget === tailBudget && !fromHeader && !compactionUnknown && compactionWindow === undefined) continue;
-        return projectCodex({
-          threadId, usage, usageAt, compactionAt,
-          compactionWindow: compactionUnknown ? undefined : compactionWindow,
-        }, threadId, Date.now());
+      const key = JSON.stringify([home, threadId, recording]);
+      const fileId = `${stats.dev}:${stats.ino}:${stats.birthtimeMs}:${digest(header.subarray(0, newline))}`;
+      async function readAt(offset: number, length: number) {
+        const bytes = Buffer.alloc(length);
+        const { bytesRead } = await file.read(bytes, 0, length, offset);
+        return bytesRead === length ? bytes : null;
       }
-      return unavailable("no-records");
+      async function boundaryAt(offset: number) {
+        const start = Math.max(0, offset - boundaryBytes);
+        const bytes = await readAt(start, offset - start);
+        return bytes && digest(bytes);
+      }
+      const previous = checkpoints.get(key);
+      const resume = previous && previous.fileId === fileId && previous.size <= stats.size &&
+        previous.modified <= stats.mtimeMs &&
+        (previous.size !== stats.size || (previous.modified === stats.mtimeMs && previous.changed === stats.ctimeMs)) &&
+        previous.boundary === await boundaryAt(previous.offset);
+      const state = resume ? { ...previous.state } : {};
+      const offset = resume ? previous.offset : newline + 1;
+      // shortcut: one record over the budget stops history verification; use a streaming record scanner if observed.
+      const forward = await readAt(offset, Math.min(stats.size - offset, compactionTailBudget));
+      if (!forward) return unavailable("waiting");
+      const consumed = scanRecords(forward, 0, state);
+      const verifiedOffset = offset + consumed;
+      let usage = state.usage;
+      let usageAt = state.usageAt;
+      if (offset + forward.length < stats.size) {
+        // Keep cumulative token readings useful while the earlier history catches up.
+        const start = Math.max(newline + 1, stats.size - tailBudget);
+        const tail = await readAt(start, stats.size - start);
+        if (!tail) return unavailable("waiting");
+        const tailState: Scan = {};
+        const firstComplete = start === newline + 1 ? 0 : tail.indexOf(10) + 1;
+        if (start === newline + 1 || firstComplete > 0) scanRecords(tail, firstComplete, tailState);
+        ({ usage, usageAt } = tailState);
+      }
+      const boundary = await boundaryAt(verifiedOffset);
+      const last = await file.stat();
+      if (signal.aborted) return unavailable("error");
+      if (!boundary || last.size < stats.size ||
+        (last.size === stats.size && (last.mtimeMs !== stats.mtimeMs || last.ctimeMs !== stats.ctimeMs))) {
+        return unavailable("waiting");
+      }
+      if (checkpoints.get(key) === previous) {
+        checkpoints.delete(key);
+        if (checkpoints.size >= 32) checkpoints.delete(checkpoints.keys().next().value!);
+        checkpoints.set(key, { fileId, offset: verifiedOffset, size: stats.size,
+          modified: stats.mtimeMs, changed: stats.ctimeMs, boundary, state });
+      }
+      const reachedEnd = offset + forward.length === stats.size;
+      return projectCodex({
+        threadId, usage, usageAt, compactionAt: state.compactionAt,
+        compactionWindow: reachedEnd && !state.compactionUnknown
+          ? state.compactionWindow ?? (verifiedOffset === stats.size && last.size === stats.size ? 0 : undefined)
+          : undefined,
+      }, threadId, Date.now());
     } finally { await file.close(); }
   } catch (error) {
     if (error instanceof Error && "code" in error) {

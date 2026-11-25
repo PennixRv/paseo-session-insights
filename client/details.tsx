@@ -41,39 +41,36 @@ export function Details({
 
   return (
     <View style={{ gap: 14 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Text testID="insights-codex-session-id" selectable
-            accessibilityLabel={codexSessionId ? `Codex 会话 ID ${codexSessionId}` : undefined}
-            style={{ ...sessionIdText, flexShrink: 1 }}>
-            {codexSessionId ?? "等待 Codex 会话 ID"}
-          </Text>
-          {codexSessionId && <Pressable accessibilityRole="button" accessibilityLabel="复制 Codex 会话 ID"
-            onPress={() => { void copyText(codexSessionId).then(
-              () => toast.show("已复制会话 ID"), () => toast.error("无法复制会话 ID"),
-            ); }} hitSlop={6}
-            style={{ flexShrink: 0, minHeight: 44, justifyContent: "center" }}>
-            <Text style={sessionIdText}>复制</Text>
-          </Pressable>}
-        </View>
-        <Pressable
-          testID="insights-details-refresh"
-          accessibilityRole="button"
-          accessibilityState={{ busy: reading, disabled: reading }}
-          disabled={reading}
-          onPress={() => { void session.refresh(); }}
-          hitSlop={4}
-          style={{ flexShrink: 0, paddingHorizontal: 4, minHeight: 44, justifyContent: "center" }}
-        >
-          <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "500" }}>{reading ? "正在读取" : "刷新"}</Text>
-        </Pressable>
+      <View style={{ minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 }}>
+        <Text testID="insights-codex-session-id" selectable
+          accessibilityLabel={codexSessionId ? `Codex 会话 ID ${codexSessionId}` : undefined}
+          style={{ ...sessionIdText, flexShrink: 1 }}>
+          {codexSessionId ?? "等待 Codex 会话 ID"}
+        </Text>
+        {codexSessionId && <Pressable accessibilityRole="button" accessibilityLabel="复制 Codex 会话 ID"
+          onPress={() => { void copyText(codexSessionId).then(
+            () => toast.show("已复制会话 ID"), () => toast.error("无法复制会话 ID"),
+          ); }} hitSlop={6}
+          style={{ flexShrink: 0, minHeight: 44, justifyContent: "center" }}>
+          <Text style={sessionIdText}>复制</Text>
+        </Pressable>}
       </View>
       {snapshot.fixture && <Text style={metricText}>演示数据</Text>}
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
-          <Text accessibilityRole="header" style={{
-            color: colors.foreground, fontSize: 15, fontWeight: group.ids === detailGroups[2].ids || group.ids === detailGroups[3].ids ? "400" : "500",
-          }}>{group.title}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text accessibilityRole="header" style={{
+              color: colors.foreground, fontSize: 15, fontWeight: group.ids === detailGroups[2].ids || group.ids === detailGroups[3].ids ? "400" : "500",
+            }}>{group.title}</Text>
+            {group === detailGroups[0] && (
+              <Pressable testID="insights-details-refresh" accessibilityRole="button"
+                accessibilityState={{ busy: reading, disabled: reading }} disabled={reading}
+                onPress={() => { void session.refresh(); }}
+                style={{ flexShrink: 0, paddingHorizontal: 4, minHeight: 44, justifyContent: "center" }}>
+                <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "500" }}>{reading ? "正在读取" : "刷新"}</Text>
+              </Pressable>
+            )}
+          </View>
           {Array.from({ length: Math.ceil(group.ids.length / columns) }, (_, row) => (
             <View key={row} style={{ flexDirection: "row", gap: 6, alignItems: "stretch" }}>
               {group.ids.slice(row * columns, (row + 1) * columns).map(id => {

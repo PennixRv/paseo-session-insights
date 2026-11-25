@@ -60,7 +60,8 @@ export async function readTeamwork(cwd: string | null, threadId: string | null, 
   const remaining = () => Math.max(1, deadline - clock());
   const scopes = ["project", "global"] as const;
   const responses = await Promise.allSettled(scopes.map(async scope =>
-    list(await run(["teamwork", "list", "--scope", scope, "--all", "--owner-session", threadId, "--json"], cwd, remaining())),
+    list(await run(["teamwork", "list", "--scope", scope, "--all", "--owner-session", threadId, "--json",
+      ...(scope === "project" ? ["--all-projects"] : [])], cwd, remaining())),
   ));
   if (responses.every(r => r.status === "rejected")) return unavailable(members, "error");
   let partial = false;
