@@ -156,6 +156,71 @@ test("manual refresh immediately starts one read even just after an automatic re
   }
 });
 
+test("an idle session keeps its reading and recovers if RPC fails just after foregrounding", async ({ mock }) => {
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
+  let calls = 0;
+  const session = createSession(async () => {
+    if (++calls === 2) throw Error("Disconnected during foreground recovery");
+    if (calls === 3) return emptySnapshot("error");
+    return fixtureSnapshot(Date.now());
+  });
+  const tick = async (ms = 0) => {
+    mock.timers.tick(ms);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+  session.setForeground(true);
+  const detach = session.attach();
+  try {
+    await tick();
+    session.setForeground(false);
+    await tick(5_000);
+    session.setForeground(true);
+    await tick();
+    assert.equal(calls, 2);
+    assert.equal(session.current().metrics.input.observedAt, 1_000);
+    await tick(2_000);
+    assert.equal(calls, 3);
+    assert.equal(session.current().metrics.input.observedAt, 1_000);
+    await tick(4_000);
+    assert.equal(calls, 4);
+    assert.equal(session.current().metrics.input.observedAt, 12_000);
+    await tick(60_000);
+    assert.equal(calls, 4);
+  } finally {
+    detach();
+    session.dispose();
+  }
+});
+
+test("idle recovery stops after three retries and reconnecting requests a new reading", async ({ mock }) => {
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
+  let calls = 0;
+  const session = createSession(async () => ++calls <= 4 ? emptySnapshot("error") : fixtureSnapshot(Date.now()));
+  const tick = async (ms = 0) => {
+    mock.timers.tick(ms);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+  session.setForeground(true);
+  const detach = session.attach();
+  try {
+    await tick();
+    for (const delay of [2_000, 4_000, 8_000, 60_000]) await tick(delay);
+    assert.equal(calls, 4);
+    session.setConnected(false);
+    session.setForeground(false);
+    session.setForeground(true);
+    await tick(20_000);
+    assert.equal(calls, 4);
+    session.setConnected(true);
+    await tick();
+    assert.equal(calls, 5);
+    assert.equal(session.current().metrics.input.state, "ready");
+  } finally {
+    detach();
+    session.dispose();
+  }
+});
+
 test("details continue billing at the allowed interval and stop at end, close, background or thread change", async ({ mock }) => {
   mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
   const reads: number[] = [];

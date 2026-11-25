@@ -66,9 +66,10 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
   const notices = [quota, subscription, today, week].flatMap(({ state }, index) =>
     state === "ready" ? [] : [`${sectionLabels[index]}${state === "stale" ? "已过期" : state === "rate-limited" ? "暂受限流" : "暂不可读"}`]);
   if (cards?.incomplete) notices.push("重置卡到期信息不完整");
-  const pair = (label: string, value: string, description = value) => (
+  const pair = (label: string, value: string, description = value, fullWidth = false) => (
     <View key={label} accessible accessibilityLabel={`${label}，${description}`}
-      style={{ flex: stacked ? undefined : 1, minWidth: 0, flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 5 }}>
+      style={{ flex: fullWidth || stacked ? undefined : 1, flexShrink: 0, minWidth: 0,
+        flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 5 }}>
       <Text style={{ ...ink, flexShrink: 1 }}>{label}</Text>
       <Text style={numeric}>{value}</Text>
     </View>
@@ -96,7 +97,7 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
   const pairStyle = { flexDirection: stacked ? "column" as const : "row" as const, gap: columnGap };
   return (
     <View testID="insights-account" onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ gap: 5 }}>
-      {pair("七日额度", window ? `${percent} 已用` : unavailable)}
+      {pair("七日额度", window ? `${percent} 已用` : unavailable, undefined, true)}
       <View style={{ height: 5, borderRadius: 3, backgroundColor: border, overflow: "hidden" }}>
         {window && <View style={{ height: "100%", width: `${window.used}%`, backgroundColor: statusSuccess }} />}
       </View>

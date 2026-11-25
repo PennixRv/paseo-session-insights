@@ -1,7 +1,8 @@
-import { emptySnapshot, type Snapshot } from "../shared/metrics.ts";
+import { emptySnapshot, metricIds, type Snapshot } from "../shared/metrics.ts";
 
 const refreshInterval = 15_000;
 const settleDelay = 5_000;
+const retryDelays = [2_000, 4_000, 8_000];
 
 export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
   let current = emptySnapshot("loading");
@@ -12,6 +13,8 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
   let inFlight: Promise<void> | undefined;
   let disposed = false;
   let foreground = false;
+  let connected = true;
+  let failures = 0;
   let running = false;
   let settleAt: number | undefined;
   let continuing = false;
@@ -23,17 +26,34 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
     for (const listener of listeners) listener();
   }
 
-  const visible = () => !disposed && readers > 0 && foreground;
+  const visible = () => !disposed && readers > 0 && foreground && connected;
+  const retrying = () => failures > 0 && failures <= retryDelays.length;
 
   function schedule() {
     clearTimeout(timer);
-    if (!visible() || inFlight || (!running && !continuing && settleAt === undefined)) return;
+    if (!visible() || inFlight || (!retrying() && !running && !continuing && settleAt === undefined)) return;
     const retryAt = continuing && !running ? current.metrics.cost.retryAt ?? 0 : 0;
-    const due = Math.max(nextReadAt, settleAt ?? 0, retryAt);
+    const due = Math.max(nextReadAt, retrying() ? 0 : settleAt ?? 0, retryAt);
     timer = setTimeout(() => {
       if (clock() < due) schedule();
       else void refresh(true);
     }, Math.min(2_147_483_647, Math.max(0, due - clock())));
+  }
+
+  function failed(snapshot: Snapshot, unlinked = false) {
+    if (unlinked || metricIds.every(id => !("value" in current.metrics[id]))) current = snapshot;
+    continuing = false;
+    failures++;
+    nextReadAt = clock() + (retryDelays[failures - 1] ?? refreshInterval);
+  }
+
+  function resume() {
+    if (!visible()) return;
+    failures = 0;
+    if (!inFlight) {
+      nextReadAt = 0;
+      void refresh(true);
+    }
   }
 
   function refresh(automatic = false): Promise<void> {
@@ -48,13 +68,19 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       nextReadAt = startedAt + refreshInterval;
       const snapshot = await read();
       if (disposed || expected !== generation) return;
+      const state = snapshot.metrics.input.state;
+      if ((state === "error" || state === "unlinked" || state === "rate-limited") &&
+          metricIds.every(id => snapshot.metrics[id].state === state && !("value" in snapshot.metrics[id]))) {
+        failed(snapshot, state === "unlinked");
+        return;
+      }
+      failures = 0;
       current = snapshot;
       const cost = snapshot.metrics.cost;
       if (!cost.hasMoreBilling || cost.state === "error") continuing = false;
     }).catch(() => {
       if (disposed || expected !== generation) return;
-      current = emptySnapshot("error");
-      continuing = false;
+      failed(emptySnapshot("error"));
     }).finally(() => {
       if (inFlight === request) {
         inFlight = undefined;
@@ -98,7 +124,7 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
     setForeground(active: boolean) {
       if (foreground === active) return;
       foreground = active;
-      if (visible()) void refresh(true);
+      if (active) resume();
       else {
         settleAt = undefined;
         continuing = false;
@@ -106,9 +132,18 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       schedule();
       notify();
     },
+    setConnected(online: boolean) {
+      if (connected === online) return;
+      connected = online;
+      if (online) resume();
+      schedule();
+    },
     attach() {
       readers++;
-      if (visible()) void refresh(true);
+      if (visible()) {
+        if (failures > 0 && readers === 1) resume();
+        else void refresh(true);
+      }
       schedule();
       notify();
       return () => {
@@ -125,6 +160,7 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       generation += 1;
       inFlight = undefined;
       nextReadAt = 0;
+      failures = 0;
       continuing = false;
       current = emptySnapshot("loading");
       if (visible()) void refresh(true);

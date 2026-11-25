@@ -1,4 +1,4 @@
-import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { useHosts, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, Modal } from "@getpaseo/plugin/client/ui";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AppState, Pressable, Text, View } from "react-native";
@@ -14,16 +14,20 @@ const shortLabels = {
 } satisfies Record<MetricId, string>;
 
 export function SidebarMetrics({
-  theme, layout, session, title, codexSessionId, trailing,
-}: Pick<PluginSidebarItemProps, "theme" | "layout"> & {
+  theme, layout, host, session, title, codexSessionId, trailing,
+}: Pick<PluginSidebarItemProps, "theme" | "layout" | "host"> & {
   session: InsightSession; title: string | null; codexSessionId: string | null; trailing?: ReactNode;
 }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
+  const connection = useHosts().find(({ serverId }) => serverId === host.id)?.status;
   const [open, setOpen] = useState(false);
   const { accent, foreground, foregroundMuted } = theme.colors;
   const metricSize = 14;
   const metricInk = { color: foreground, opacity: 0.82 };
   const columnGap = layout.compact ? 28 : 20;
+  useEffect(() => {
+    session.setConnected(connection === undefined || connection === "online");
+  }, [session, connection]);
   useEffect(() => {
     session.setForeground(AppState.currentState === "active" || AppState.currentState === null);
     const detach = session.attach();
