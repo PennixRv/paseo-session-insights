@@ -38,11 +38,11 @@ export function useAccount(view: AccountView, visible: boolean) {
   return reading;
 }
 
-export const accountTitle = "ChatGPT Status";
 const unavailable = "—";
 
-export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarItemProps, "theme" | "layout"> & {
+export function AccountMetrics({ reading, theme, layout, reserveLayout = false }: Pick<PluginSidebarItemProps, "theme" | "layout"> & {
   reading: AccountSnapshot | undefined;
+  reserveLayout?: boolean;
 }) {
   const { fontScale } = useWindowDimensions();
   const [width, setWidth] = useState(0);
@@ -51,20 +51,22 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
   const ink = { color: foreground, opacity: 0.82, fontSize: 14, fontWeight: "400" as const };
   const numeric = { ...ink, fontVariant: ["tabular-nums" as const], textAlign: "right" as const };
   const note = { color: foregroundMuted, fontSize: 11 };
-  if (reading?.state !== "enabled") {
-    const state = reading?.state;
+  const snapshot = reading?.state === "enabled" ? reading : undefined;
+  const state = reading?.state;
+  const waiting = state === "missing-key" ? "尚未配置 Sub2API Key" : state === "forbidden" ? "Sub2API 拒绝读取" :
+    state === "error" ? "暂时无法读取账号指标" : "正在读取";
+  if (!snapshot && !reserveLayout) {
     return <Text style={note} accessibilityLiveRegion="polite">
-      {state === "missing-key" ? "尚未配置 Sub2API Key" : state === "forbidden" ? "Sub2API 拒绝读取" :
-        state === "error" ? "暂时无法读取账号指标" : "正在读取"}
+      {waiting}
     </Text>;
   }
-  const { quota, subscription, today, week } = reading;
-  const window = quota.data?.window;
-  const cards = quota.data?.cards;
+  const window = snapshot?.quota.data?.window;
+  const cards = snapshot?.quota.data?.cards;
   const percent = window ? `${Number(window.used.toFixed(2))}%` : unavailable;
   const sectionLabels = ["额度与重置卡", "订阅到期", "今日", "七日"];
-  const notices = [quota, subscription, today, week].flatMap(({ state }, index) =>
-    state === "ready" ? [] : [`${sectionLabels[index]}${state === "stale" ? "已过期" : state === "rate-limited" ? "暂受限流" : "暂不可读"}`]);
+  const notices = snapshot ? [snapshot.quota, snapshot.subscription, snapshot.today, snapshot.week].flatMap(({ state }, index) =>
+    state === "ready" ? [] : [`${sectionLabels[index]}${state === "stale" ? "已过期" : state === "rate-limited" ? "暂受限流" : "暂不可读"}`])
+    : [waiting];
   if (cards?.incomplete) notices.push("重置卡到期信息不完整");
   const pair = (label: string, value: string, description = value, fullWidth = false) => (
     <View key={label} accessible accessibilityLabel={`${label}，${description}`}
@@ -86,7 +88,7 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
       </View>
     );
   };
-  const usage = [today.data, week.data] as const;
+  const usage = [snapshot?.today.data, snapshot?.week.data] as const;
   const rows = [
     ["Token 消耗", ...usage.map(v => v ? formatMetric("input", { state: "ready", value: v.tokens }, true) : unavailable)],
     ["账号计费", ...usage.map(v => v ? `${v.cost > 0 && v.cost < 0.01 ? "<0.01" : v.cost.toFixed(2)} USD` : unavailable)],
@@ -107,11 +109,12 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
       </View>
       <View style={pairStyle}>
         {pair("最早到期", formatAccountTime(cards?.earliest), cards?.earliest ?? unavailable)}
-        {pair("订阅到期", formatAccountTime(subscription.data), subscription.data ?? unavailable)}
+        {pair("订阅到期", formatAccountTime(snapshot?.subscription.data), snapshot?.subscription.data ?? unavailable)}
       </View>
       {row("指标", "今日", "七日", true)}
       {rows.map(([label, current, history]) => row(label, current, history))}
-      {notices.length > 0 && <Text style={note} accessibilityLiveRegion="polite">{notices.join(" · ")}</Text>}
+      {(reserveLayout || notices.length > 0) && <Text style={note} accessibilityLiveRegion="polite"
+        accessible={notices.length > 0}>{notices.join(" · ") || "\u00a0"}</Text>}
     </View>
   );
 }

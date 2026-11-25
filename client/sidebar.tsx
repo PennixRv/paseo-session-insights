@@ -14,21 +14,27 @@ const shortLabels = {
 } satisfies Record<MetricId, string>;
 
 export function SidebarMetrics({
-  theme, layout, host, session, title, codexSessionId, trailing,
+  theme, layout, host, session, title, codexSessionId, trailing, visible = true,
 }: Pick<PluginSidebarItemProps, "theme" | "layout" | "host"> & {
-  session: InsightSession; title: string | null; codexSessionId: string | null; trailing?: ReactNode;
+  session: InsightSession; title: string | null; codexSessionId: string | null; trailing?: ReactNode; visible?: boolean;
 }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const connection = useHosts().find(({ serverId }) => serverId === host.id)?.status;
   const [open, setOpen] = useState(false);
-  const { accent, foreground, foregroundMuted } = theme.colors;
+  const { accent, border, foreground, foregroundMuted } = theme.colors;
   const metricSize = 14;
   const metricInk = { color: foreground, opacity: 0.82 };
   const columnGap = layout.compact ? 28 : 20;
+  const compact = layout.compact || layout.platform !== "web";
+  const detailsSize = { width: compact ? 48 : 36, height: compact ? 48 : 32 };
   useEffect(() => {
     session.setConnected(connection === undefined || connection === "online");
   }, [session, connection]);
   useEffect(() => {
+    if (!visible) {
+      setOpen(false);
+      return;
+    }
     session.setForeground(AppState.currentState === "active" || AppState.currentState === null);
     const detach = session.attach();
     const subscription = AppState.addEventListener("change", state => session.setForeground(state === "active"));
@@ -36,7 +42,7 @@ export function SidebarMetrics({
       subscription.remove();
       detach();
     };
-  }, [session]);
+  }, [session, visible]);
   const status = [
     snapshot.fixture ? "演示数据" : "",
     ...detailGroups.flatMap(group => group.ids).flatMap(id => {
@@ -68,12 +74,10 @@ export function SidebarMetrics({
         <Text testID="insights-sidebar-title" accessibilityRole="header" numberOfLines={1}
           style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15, fontWeight: "400" }}>{title}</Text>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Pressable testID="insights-sidebar-details" accessibilityRole="button" accessibilityLabel="会话详情" onPress={() => setOpen(true)}
-            style={{ width: layout.compact || layout.platform !== "web" ? 48 : 36,
-              height: layout.compact || layout.platform !== "web" ? 48 : 32,
-              alignItems: "center", justifyContent: "center" }}>
+          {visible ? <Pressable testID="insights-sidebar-details" accessibilityRole="button" accessibilityLabel="会话详情"
+            onPress={() => setOpen(true)} style={{ ...detailsSize, alignItems: "center", justifyContent: "center" }}>
             <Icon name="List" size={18} color={accent} />
-          </Pressable>
+          </Pressable> : <View style={detailsSize} />}
           {trailing}
         </View>
       </View>
@@ -85,7 +89,8 @@ export function SidebarMetrics({
           }}>{renderMetric(id)}</View>
         ))}
       </View>
-      <View style={{ flexDirection: "row", gap: columnGap }}>
+      <View testID="insights-workflow-section" style={{ flexDirection: "row", gap: columnGap,
+        borderTopColor: border, borderTopWidth: 1, paddingTop: 5 }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
             <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize, fontWeight: "400" }}>
@@ -96,7 +101,7 @@ export function SidebarMetrics({
         ))}
       </View>
       {!!status && <Text style={{ color: foregroundMuted, fontSize: 11 }}>{status}</Text>}
-      {open && <Modal title="会话指标" open onOpenChange={next => {
+      {open && visible && <Modal title="会话指标" open onOpenChange={next => {
         if (!next) session.stopBilling();
         setOpen(next);
       }}>

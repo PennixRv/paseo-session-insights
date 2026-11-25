@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accountRpc } from "../shared/account.ts";
+import { accountRpc, accountTitle } from "../shared/account.ts";
 import { createAccountReader } from "../server/sub2api.ts";
 
 const settings = { baseUrl: "https://sub2api.invalid", accountId: 17, token: "adm_sc_synthetic" };
@@ -26,7 +26,7 @@ test("projects only display fields and deduplicates queries across clients", asy
     assert.equal(new Headers(init?.headers).get("x-api-key"), settings.token);
     paths.push(url.pathname + url.search);
     if (url.pathname.endsWith("/quota")) return json({
-      email: "fixture-private",
+      email: "fixture-private", plan_type: "prolite",
       rate_limit: {
         primary_window: { limit_window_seconds: 18_000, used_percent: 0, reset_at: Math.floor(start / 1000) + 180 },
         secondary_window: { limit_window_seconds: 604_800, used_percent: 42.37, reset_at: Math.floor(start / 1000) + 3600 },
@@ -34,7 +34,7 @@ test("projects only display fields and deduplicates queries across clients", asy
       rate_limit_reset_credits: { available_count: 2, credits: [{ expires_at: "2026-11-30T10:00:00Z" }, {}] },
     });
     if (!url.search) return json({ id: 17, platform: "openai", type: "oauth",
-      credentials: { subscription_expires_at: "2026-12-18", email: "fixture-private" } });
+      credentials: { subscription_expires_at: "2026-12-18", email: "fixture-private", plan_type: "pro" } });
     return json(stats(Number(url.searchParams.get("days")), url.searchParams.get("days") === "1"));
   }, () => start);
   const status = await reader(signal, true);
@@ -47,6 +47,8 @@ test("projects only display fields and deduplicates queries across clients", asy
   assert.equal(result.state, "enabled");
   if (result.state !== "enabled") throw Error("expected enabled");
   assert.equal(result.binding, status.binding);
+  assert.equal(accountTitle(result), "ChatGPT Pro 100");
+  assert.equal("plan" in (result.quota.data ?? {}), false);
   assert.equal(result.quota.data?.window?.used, 42.37);
   assert.deepEqual(result.quota.data?.cards, { count: 2, earliest: null, incomplete: true });
   assert.equal(result.subscription.data, "2026-12-18");
@@ -56,6 +58,24 @@ test("projects only display fields and deduplicates queries across clients", asy
   assert.doesNotMatch(JSON.stringify(result), /fixture-private|adm_sc/);
   await reader(signal);
   assert.equal(paths.length, 4);
+});
+
+test("only known account plans are displayed, with identity as a fallback", async () => {
+  for (const [quotaPlan, identityPlan, title] of [
+    [null, "  Plus ", "ChatGPT Plus"],
+    ["unknown", "chatgpt_pro", "ChatGPT Pro 200"],
+    ["future-private-text", 100, "ChatGPT Status"],
+  ] as const) {
+    const reader = createAccountReader(async () => settings, async request => {
+      const url = new URL(String(request));
+      if (url.pathname.endsWith("/quota")) return json({ plan_type: quotaPlan });
+      if (!url.search) return json({ id: 17, platform: "openai", type: "oauth", credentials: { plan_type: identityPlan } });
+      return json(stats(Number(url.searchParams.get("days"))));
+    }, () => start);
+    const result = await reader(signal);
+    assert.equal(accountTitle(result), title);
+    assert.doesNotMatch(JSON.stringify(result), /future-private-text/);
+  }
 });
 
 test("drops previous statistics after Shanghai midnight, and all readings on denial or rebinding", async () => {

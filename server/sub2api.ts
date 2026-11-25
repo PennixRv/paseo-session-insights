@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createHmac } from "node:crypto";
-import { count, type AccountSnapshot } from "../shared/account.ts";
+import { accountPlan, count, type AccountSnapshot } from "../shared/account.ts";
 import { runLifecycle } from "./lifecycle-cchp.ts";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -47,6 +47,7 @@ const windowSchema = z.object({
   limit_window_seconds: count, used_percent: z.number().finite().nonnegative(), reset_at: count,
 });
 const quotaSchema = z.object({
+  plan_type: z.unknown().optional(),
   rate_limit: z.object({ primary_window: windowSchema.nullish(), secondary_window: windowSchema.nullish() }).nullish(),
   rate_limit_reset_credits: z.object({
     available_count: count, credits: z.array(z.object({ expires_at: z.unknown().optional() })).optional(),
@@ -63,12 +64,25 @@ const statsSchema = z.object({
 });
 const identitySchema = z.object({
   id: count, platform: z.literal("openai"), type: z.literal("oauth"),
-  credentials: z.object({ subscription_expires_at: z.unknown().optional() }).nullish(),
+  credentials: z.object({ subscription_expires_at: z.unknown().optional(), plan_type: z.unknown().optional() }).nullish(),
 });
 const success = z.object({ code: z.literal(0), data: z.unknown() });
 
+// Match the OpenAI labels in the deployed Sub2API's planType.ts.
+const plans = new Map<string, z.infer<typeof accountPlan>>([
+  ["free", "Free"], ["go", "Go"], ["plus", "Plus"], ["prolite", "Pro 100"], ["pro", "Pro 200"],
+  ["chatgptpro", "Pro 200"], ["promax", "Pro 500"], ["team", "Business"],
+  ["selfservebusinessusagebased", "Business"], ["selfservebusinessprolite", "Business Premium"],
+  ["business", "Enterprise"], ["enterprise", "Enterprise"], ["ent26", "Enterprise"],
+  ["enterprisecbpusagebased", "Enterprise"], ["enterprisecbpautomation", "Enterprise (Automation)"],
+  ["edu", "Edu"], ["eduplus", "Edu Plus"], ["edupro", "Edu Pro"],
+]);
+const parsePlan = (value: unknown) =>
+  typeof value === "string" ? plans.get(value.trim().toLowerCase().replace(/[\s_-]+/g, "")) : undefined;
+
 function parseQuota(payload: unknown, now: number) {
   const data = quotaSchema.parse(payload);
+  const plan = parsePlan(data.plan_type);
   const windows = [data.rate_limit?.primary_window, data.rate_limit?.secondary_window].filter(
     item => item && item.limit_window_seconds === 604800,
   );
@@ -76,7 +90,7 @@ function parseQuota(payload: unknown, now: number) {
   const window = sevenDays && sevenDays.reset_at > now / 1000 && sevenDays.reset_at < 253402300799
     ? { used: Math.min(100, sevenDays.used_percent), resetAt: sevenDays.reset_at } : null;
   const cards = data.rate_limit_reset_credits;
-  if (!cards) return { window, cards: null };
+  if (!cards) return { window, cards: null, plan };
   const dates = (cards.credits ?? []).flatMap(({ expires_at }) => {
     const checked = dateTime.safeParse(expires_at);
     return checked.success ? [checked.data] : [];
@@ -84,7 +98,7 @@ function parseQuota(payload: unknown, now: number) {
   const incomplete = cards.available_count > 0 &&
     (dates.length !== cards.available_count || cards.credits?.length !== dates.length);
   dates.sort((a, b) => Date.parse(a) - Date.parse(b));
-  return { window, cards: { count: cards.available_count, earliest: !incomplete && cards.available_count ? dates[0] : null, incomplete } };
+  return { window, cards: { count: cards.available_count, earliest: !incomplete && cards.available_count ? dates[0] : null, incomplete }, plan };
 }
 
 function parseStats(payload: unknown, days: number, date: string) {
@@ -186,7 +200,7 @@ export function createAccountReader(lookup = accountConfig, fetcher = globalThis
     let week = blank<ReturnType<typeof parseStats>>();
     let date = "";
     const quota = blank<ReturnType<typeof parseQuota>>();
-    const subscription = blank<string | null>();
+    const identity = blank<{ expires: string | null; plan?: z.infer<typeof accountPlan> }>();
     let deniedUntil = 0;
     let limitedUntil = 0;
     let pending: Promise<AccountSnapshot> | undefined;
@@ -224,19 +238,19 @@ export function createAccountReader(lookup = accountConfig, fetcher = globalThis
         cell.data = undefined;
         return { state: now < limitedUntil ? "rate-limited" : cell.state };
       }
-      const [quotaReading, subscriptionReading, todayReading, weekReading] = await Promise.all([
+      const [quotaReading, identityReading, todayReading, weekReading] = await Promise.all([
         read(quota, `/api/v1/admin/openai/accounts/${config.accountId}/quota`, 5 * minute,
           raw => parseQuota(raw, clock()), data => data.window ? data.window.resetAt * 1000 : Infinity),
-        read(subscription, root, 30 * minute, raw => {
+        read(identity, root, 30 * minute, raw => {
           const identity = identitySchema.safeParse(raw);
           if (!identity.success || identity.data.id !== config.accountId) throw new SourceError("forbidden");
           const expires = z.union([dateOnly, dateTime]).safeParse(identity.data.credentials?.subscription_expires_at);
-          return expires.success ? expires.data : null;
+          return { expires: expires.success ? expires.data : null, plan: parsePlan(identity.data.credentials?.plan_type) };
         }),
         read(today, `${root}/stats?days=1`, minute, raw => parseStats(raw, 1, day)),
         read(week, `${root}/stats?days=7`, minute, raw => parseStats(raw, 7, day)),
       ]);
-      const cells = [quota, subscription, today, week];
+      const cells = [quota, identity, today, week];
       if (forbidden) {
         deniedUntil = clock() + minute;
         for (const cell of cells) Object.assign(cell, blank(), { data: undefined });
@@ -247,7 +261,11 @@ export function createAccountReader(lookup = accountConfig, fetcher = globalThis
         quotaReading.data = { ...quotaReading.data, window: null };
       }
       const rolled = shanghaiDate(clock()) !== day;
-      return { state: "enabled", quota: quotaReading, subscription: subscriptionReading,
+      const quotaData = quotaReading.data;
+      const plan = (quotaReading.state === "ready" ? quotaData?.plan : undefined) ?? identityReading.data?.plan ?? quotaData?.plan;
+      return { state: "enabled", plan, quota: { state: quotaReading.state,
+        data: quotaData && { window: quotaData.window, cards: quotaData.cards } },
+        subscription: { state: identityReading.state, data: identityReading.data?.expires },
         today: rolled ? { state: "error" } : todayReading, week: rolled ? { state: "error" } : weekReading };
     }
 

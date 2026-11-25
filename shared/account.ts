@@ -7,6 +7,8 @@ const percent = amount.max(100);
 const binding = z.string().regex(/^[a-f0-9]{64}$/).optional();
 const date = z.iso.date();
 const timestamp = z.iso.datetime({ offset: true });
+export const accountPlan = z.enum(["Free", "Go", "Plus", "Pro 100", "Pro 200", "Pro 500",
+  "Business", "Business Premium", "Enterprise", "Enterprise (Automation)", "Edu", "Edu Plus", "Edu Pro"]);
 const slot = <T extends z.ZodType>(data: T) => z.object({
   state: z.enum(["ready", "stale", "error", "rate-limited"]),
   data: data.optional(),
@@ -23,6 +25,7 @@ export const accountRpc = defineRpc({
     z.object({
       state: z.literal("enabled"),
       binding,
+      plan: accountPlan.optional(),
       quota: slot(z.object({
         window: z.object({ used: percent, resetAt: count }).nullable(),
         cards: z.object({ count, earliest: z.union([date, timestamp]).nullable(), incomplete: z.boolean() }).nullable(),
@@ -34,3 +37,7 @@ export const accountRpc = defineRpc({
   ]),
 });
 export type AccountSnapshot = z.output<typeof accountRpc.output>;
+
+export function accountTitle(reading: AccountSnapshot | undefined): string {
+  return reading?.state === "enabled" && reading.plan ? `ChatGPT ${reading.plan}` : "ChatGPT Status";
+}

@@ -17,7 +17,7 @@ export default function contribute(server: PluginServerContext) {
   const readAccount = createAccountReader();
   const fixtureBinding = "a".repeat(64);
   server.handle(accountRpc, ({ statusOnly }): AccountSnapshot | Promise<AccountSnapshot> => fixture && !statusOnly ? {
-    state: "enabled", binding: fixtureBinding,
+    state: "enabled", binding: fixtureBinding, plan: "Pro 100",
     quota: { state: "ready", data: { window: { used: 42.37, resetAt: Math.floor(Date.now() / 1000) + 86400 },
       cards: { count: 2, earliest: "2026-12-08T10:16:00+08:00", incomplete: false } } },
     subscription: { state: "ready", data: "2026-12-18T10:16:00+08:00" },
