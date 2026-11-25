@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { AppState, Text, View, useWindowDimensions } from "react-native";
 import type { AccountSnapshot } from "../shared/account.ts";
 import { formatMetric } from "../shared/format.ts";
+import type { AccountView } from "./account-state.ts";
 
-export function useAccount(read: (statusOnly: boolean) => Promise<AccountSnapshot>, visible: boolean) {
-  const [reading, setReading] = useState<AccountSnapshot>();
+export function useAccount(view: AccountView, read: (statusOnly: boolean) => Promise<AccountSnapshot>, visible: boolean) {
+  const [reading, setReading] = useState(view.snapshot);
   const readRef = useRef(read);
   readRef.current = read;
   useEffect(() => {
@@ -14,22 +15,23 @@ export function useAccount(read: (statusOnly: boolean) => Promise<AccountSnapsho
     let foreground = AppState.currentState !== "background" && AppState.currentState !== "inactive";
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function refresh() {
-      if (!foreground || pending) return;
+      if (!active || !foreground || pending) return;
       pending = true;
       try {
-        const result = await readRef.current(!visible);
+        const result = await view.refresh(readRef.current, !visible);
         if (active && foreground) setReading(result);
-      } catch {
-        if (active && foreground) setReading({ state: "error" });
       } finally {
         pending = false;
-        if (active && foreground) timer = setTimeout(() => { void refresh(); }, 60_000);
+        if (active && foreground) timer = setTimeout(() => { void refresh(); }, view.refreshDelay());
       }
     }
     const subscription = AppState.addEventListener("change", state => {
       foreground = state === "active";
       clearTimeout(timer);
-      if (foreground) void refresh();
+      if (foreground) {
+        setReading(view.snapshot());
+        void refresh();
+      }
     });
     void refresh();
     return () => {
@@ -37,7 +39,7 @@ export function useAccount(read: (statusOnly: boolean) => Promise<AccountSnapsho
       clearTimeout(timer);
       subscription.remove();
     };
-  }, [visible]);
+  }, [view, visible]);
   return reading;
 }
 
