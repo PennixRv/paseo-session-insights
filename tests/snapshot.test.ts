@@ -4,7 +4,7 @@ import { findFocusedAgent } from "../client/focus.ts";
 import { createSession } from "../client/session.ts";
 import { fixtureSnapshot } from "../server/fixture.ts";
 import { createSnapshotHandler, type Subject } from "../server/snapshot.ts";
-import { formatMetric } from "../shared/format.ts";
+import { formatAccountTime, formatMetric } from "../shared/format.ts";
 import { detailGroups, emptySnapshot, metricIds, snapshotSchema, targetSchema } from "../shared/metrics.ts";
 
 function deferred<T>() {
@@ -23,6 +23,14 @@ test("both surfaces keep the same 16 metrics, units and groups", () => {
   assert.equal(formatMetric("cache", fixture.metrics.cache), "87.00%");
   assert.equal(formatMetric("cost", fixture.metrics.cost), "4.28 USD");
   assert.equal(formatMetric("tps", fixture.metrics.tps), "46 tok/s");
+});
+
+test("account times use one local format and preserve date-only precision", () => {
+  const time = new Date(2026, 11, 18, 9, 5);
+  assert.equal(formatAccountTime(time.toISOString()), "12/18 09:05");
+  assert.equal(formatAccountTime(time.getTime() / 1000), "12/18 09:05");
+  assert.equal(formatAccountTime("2026-12-18"), "12/18");
+  assert.equal(formatAccountTime(null), "—");
 });
 
 test("formatter distinguishes missing, tiny values and zero", () => {

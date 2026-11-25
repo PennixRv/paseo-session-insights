@@ -2,7 +2,8 @@ import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Text, View, useWindowDimensions } from "react-native";
 import type { AccountSnapshot } from "../shared/account.ts";
-import { formatMetric } from "../shared/format.ts";
+import { formatAccountTime, formatMetric } from "../shared/format.ts";
+import { labels } from "../shared/metrics.ts";
 import type { AccountView } from "./account-state.ts";
 
 export function useAccount(view: AccountView, read: (statusOnly: boolean) => Promise<AccountSnapshot>, visible: boolean) {
@@ -45,15 +46,6 @@ export function useAccount(view: AccountView, read: (statusOnly: boolean) => Pro
 
 export const accountTitle = "ChatGPT Status";
 const unavailable = "—";
-const day = (date: string | null | undefined) => {
-  if (!date) return unavailable;
-  if (date.length === 10) return date.slice(5).replace("-", "/");
-  return new Date(date).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
-};
-const resetTime = (seconds: number) => {
-  const date = new Date(seconds * 1000);
-  return `${date.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" })} ${date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;
-};
 
 export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarItemProps, "theme" | "layout"> & {
   reading: AccountSnapshot | undefined;
@@ -76,7 +68,7 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
   const window = quota.data?.window;
   const cards = quota.data?.cards;
   const percent = window ? `${Number(window.used.toFixed(2))}%` : unavailable;
-  const sectionLabels = ["额度与重置卡", "订阅到期", "今日", "近 7 天"];
+  const sectionLabels = ["额度与重置卡", "订阅到期", "今日", "七日"];
   const notices = [quota, subscription, today, week].flatMap(({ state }, index) =>
     state === "ready" ? [] : [`${sectionLabels[index]}${state === "stale" ? "已过期" : state === "rate-limited" ? "暂受限流" : "暂不可读"}`]);
   if (cards?.incomplete) notices.push("重置卡到期信息不完整");
@@ -87,39 +79,42 @@ export function AccountMetrics({ reading, theme, layout }: Pick<PluginSidebarIte
       <Text style={numeric}>{value}</Text>
     </View>
   );
-  const row = (label: string, current: string, history: string) => (
-    <View key={label} accessible accessibilityLabel={label === "指标" ? "指标，今日，近 7 天" : `${label}，今日 ${current}，近 7 天 ${history}`}
-      style={{ flexDirection: "row", alignItems: "baseline", gap: 5, paddingVertical: 2,
-        borderBottomColor: border, borderBottomWidth: label === "指标" ? 1 : 0 }}>
-      <Text style={{ ...ink, flex: 1, minWidth: 0 }}>{label}</Text>
-      <Text style={{ ...numeric, width: "30%" }}>{current}</Text>
-      <Text style={{ ...numeric, width: "30%" }}>{history}</Text>
-    </View>
-  );
+  const row = (label: string, current: string, history: string, header = false) => {
+    const opacity = header ? 0.94 : ink.opacity;
+    return (
+      <View key={label} accessible accessibilityLabel={header ? "指标，今日，七日" : `${label}，今日 ${current}，七日 ${history}`}
+        style={{ flexDirection: "row", alignItems: "baseline", gap: 5, paddingVertical: 2,
+          ...(header ? { paddingTop: 5, borderColor: border, borderTopWidth: 1, borderBottomWidth: 1 } : {}) }}>
+        <Text style={{ ...ink, opacity, flex: 1, minWidth: 0 }}>{label}</Text>
+        <Text style={{ ...numeric, opacity, width: "30%" }}>{current}</Text>
+        <Text style={{ ...numeric, opacity, width: "30%" }}>{history}</Text>
+      </View>
+    );
+  };
   const usage = [today.data, week.data] as const;
   const rows = [
     ["Token 消耗", ...usage.map(v => v ? formatMetric("input", { state: "ready", value: v.tokens }, true) : unavailable)],
     ["账号计费", ...usage.map(v => v ? `${v.cost > 0 && v.cost < 0.01 ? "<0.01" : v.cost.toFixed(2)} USD` : unavailable)],
     ["请求数", ...usage.map(v => v ? v.requests.toLocaleString("en-US") : unavailable)],
-    ["缓存命中率", ...usage.map(v => v?.cache == null ? unavailable : formatMetric("cache", { state: "ready", value: v.cache }))],
+    [labels.cache, ...usage.map(v => v?.cache == null ? unavailable : formatMetric("cache", { state: "ready", value: v.cache }))],
   ];
   const columnGap = stacked ? 3 : layout.compact ? 28 : 20;
   const pairStyle = { flexDirection: stacked ? "column" as const : "row" as const, gap: columnGap };
   return (
     <View testID="insights-account" onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ gap: 5 }}>
-      {pair("七天额度", window ? `${percent} 已用` : unavailable)}
+      {pair("七日额度", window ? `${percent} 已用` : unavailable)}
       <View style={{ height: 5, borderRadius: 3, backgroundColor: border, overflow: "hidden" }}>
         {window && <View style={{ height: "100%", width: `${window.used}%`, backgroundColor: statusSuccess }} />}
       </View>
       <View style={pairStyle}>
-        {pair("额度重置", window ? resetTime(window.resetAt) : unavailable)}
+        {pair("额度重置", formatAccountTime(window?.resetAt))}
         {pair("重置卡", cards ? `${cards.count} 张` : unavailable)}
       </View>
       <View style={pairStyle}>
-        {pair("最早卡到期", day(cards?.earliest), cards?.earliest ?? unavailable)}
-        {pair("订阅到期", day(subscription.data), subscription.data ?? unavailable)}
+        {pair("最早到期", formatAccountTime(cards?.earliest), cards?.earliest ?? unavailable)}
+        {pair("订阅到期", formatAccountTime(subscription.data), subscription.data ?? unavailable)}
       </View>
-      {row("指标", "今日", "近 7 天")}
+      {row("指标", "今日", "七日", true)}
       {rows.map(([label, current, history]) => row(label, current, history))}
       {notices.length > 0 && <Text style={note} accessibilityLiveRegion="polite">{notices.join(" · ")}</Text>}
     </View>

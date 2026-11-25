@@ -8,7 +8,7 @@ export const metricIds = [
 export type MetricId = typeof metricIds[number];
 
 export const labels: Record<MetricId, string> = {
-  input: "累计输入（含缓存）", output: "累计输出", cachedInput: "累计缓存输入", cache: "输入缓存命中率", compactions: "已完成压缩",
+  input: "累计输入（含缓存）", output: "累计输出", cachedInput: "累计缓存输入", cache: "缓存命中", compactions: "已完成压缩",
   cost: "已结算费用", ttft: "首 token 耗时", tps: "流式输出速率",
   planning: "规划", inProgress: "进行", completed: "完成", cancelled: "取消",
   working: "执行", idle: "空闲", error: "出错", ended: "结束",

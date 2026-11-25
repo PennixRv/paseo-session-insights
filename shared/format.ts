@@ -6,6 +6,16 @@ export const stateLabels: Record<Metric["state"], string> = {
   ready: "", partial: "部分覆盖", stale: "已过期",
 };
 
+export function formatAccountTime(value: number | string | null | undefined): string {
+  if (value == null) return "—";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value.slice(5).replace("-", "/");
+  const time = new Date(typeof value === "number" ? value * 1000 : value);
+  if (!Number.isFinite(time.getTime())) return "—";
+  const date = time.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
+  const hours = time.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return `${date} ${hours}`;
+}
+
 function compact(value: number): string {
   if (value < 1000) return String(value);
   if (value < 10000) return `${Number((value / 1000).toFixed(1))}k`;

@@ -29,7 +29,7 @@ test("projects only display fields and deduplicates queries across clients", asy
       email: "fixture-private",
       rate_limit: {
         primary_window: { limit_window_seconds: 18_000, used_percent: 0, reset_at: Math.floor(start / 1000) + 180 },
-        secondary_window: { limit_window_seconds: 604_800, used_percent: 42, reset_at: Math.floor(start / 1000) + 3600 },
+        secondary_window: { limit_window_seconds: 604_800, used_percent: 42.37, reset_at: Math.floor(start / 1000) + 3600 },
       },
       rate_limit_reset_credits: { available_count: 2, credits: [{ expires_at: "2026-11-30T10:00:00Z" }, {}] },
     });
@@ -45,7 +45,7 @@ test("projects only display fields and deduplicates queries across clients", asy
   const result = accountRpc.output.parse(a);
   assert.equal(result.state, "enabled");
   if (result.state !== "enabled") throw Error("expected enabled");
-  assert.equal(result.quota.data?.window?.used, 42);
+  assert.equal(result.quota.data?.window?.used, 42.37);
   assert.deepEqual(result.quota.data?.cards, { count: 2, earliest: null, incomplete: true });
   assert.equal(result.subscription.data, "2026-12-18");
   assert.equal(result.today.data?.cache, 50);

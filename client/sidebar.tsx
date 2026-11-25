@@ -8,7 +8,7 @@ import { Details } from "./details.tsx";
 import type { InsightSession } from "./session.ts";
 
 const shortLabels = {
-  input: "输入", output: "输出", cachedInput: "缓存输入", cache: "缓存率", compactions: "压缩", cost: "已结算",
+  input: "输入", output: "输出", cachedInput: "缓存输入", cache: labels.cache, compactions: "压缩", cost: "已结算",
   ttft: "首 token", tps: "输出速率", planning: "规划", inProgress: "进行", completed: "完成", cancelled: "取消",
   working: "执行", idle: "空闲", error: "出错", ended: labels.ended,
 } satisfies Record<MetricId, string>;
