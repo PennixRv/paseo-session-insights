@@ -51,7 +51,7 @@ export function SidebarMetrics({
         accessibilityLabel={[labels[id], value, stateLabels[reading.state], reading.basis].filter(Boolean).join("，")}
         style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 5 }}>
         <Text style={{ color: foregroundMuted, fontSize: metricSize, flexShrink: 1 }}>{shortLabels[id]}</Text>
-        <Text style={{ color: foreground, fontSize: metricSize, fontVariant: ["tabular-nums"] }}>{value}</Text>
+        <Text style={{ color: foregroundMuted, fontSize: metricSize, fontVariant: ["tabular-nums"] }}>{value}</Text>
       </View>
     );
   };
@@ -60,7 +60,7 @@ export function SidebarMetrics({
   return (
     <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Text accessibilityRole="header" style={{ color: foregroundMuted, fontWeight: "600", fontSize: 15 }}>会话指标</Text>
+        <Text accessibilityRole="header" style={{ color: foreground, fontWeight: "600", fontSize: 15 }}>会话指标</Text>
         <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, color: foregroundMuted, fontSize: 13 }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => {
           setOpen(true);
@@ -81,7 +81,7 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", gap: columnGap }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text accessibilityRole="header" style={{ color: foregroundMuted, fontSize: metricSize, fontWeight: "600" }}>
+            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize, fontWeight: "600" }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>
             {group.ids.map(renderMetric)}

@@ -66,7 +66,7 @@ export function Details({
                   <View key={id} testID={`insights-detail-metric-${id}`}
                     style={{ flex: 1, minWidth: 0, backgroundColor: colors.surface1, borderRadius: 8, padding: layout.compact ? 8 : 10, gap: 3 }}>
                     <Text style={{ color: colors.foregroundMuted }}>{labels[id]}</Text>
-                    <Text style={{ color: colors.foreground, fontVariant: ["tabular-nums"] }}>{formatMetric(id, reading)}</Text>
+                    <Text style={{ color: colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{formatMetric(id, reading)}</Text>
                     {!!context && <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{context}</Text>}
                   </View>
                 );
