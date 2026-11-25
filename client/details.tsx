@@ -30,13 +30,15 @@ export function Details({
   const [refreshing, setRefreshing] = useState(false);
   const columns = fontScale >= 1.25 || width < 360 ? 1 : 2;
   const { colors } = theme;
+  const metricText = { color: colors.foreground, opacity: 0.9, fontSize: 15 };
+  const secondaryInk = { color: colors.foreground, opacity: 0.82 };
 
   return (
     <View style={{ gap: 14 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <Text testID="insights-codex-session-id" selectable
           accessibilityLabel={codexSessionId ? `Codex 会话 ID ${codexSessionId}` : undefined}
-          style={{ flex: 1, minWidth: 0, color: colors.foregroundMuted, fontSize: 12 }}>
+          style={{ flex: 1, minWidth: 0, ...secondaryInk, fontSize: 13 }}>
           {codexSessionId ?? "等待 Codex 会话 ID"}
         </Text>
         <Pressable
@@ -50,13 +52,13 @@ export function Details({
           }}
           style={{ flexShrink: 0, paddingHorizontal: 8, minHeight: 32, justifyContent: "center" }}
         >
-          <Text style={{ color: colors.foreground }}>{refreshing ? "正在刷新" : "刷新"}</Text>
+          <Text style={{ color: colors.foreground, fontSize: 15 }}>{refreshing ? "正在刷新" : "刷新"}</Text>
         </Pressable>
       </View>
-      {snapshot.fixture && <Text style={{ color: colors.foregroundMuted }}>演示数据</Text>}
+      {snapshot.fixture && <Text style={metricText}>演示数据</Text>}
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
-          <Text accessibilityRole="header" style={{ color: colors.foreground, fontWeight: "600" }}>{group.title}</Text>
+          <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: 15, fontWeight: "600" }}>{group.title}</Text>
           {Array.from({ length: Math.ceil(group.ids.length / columns) }, (_, row) => (
             <View key={row} style={{ flexDirection: "row", gap: 6, alignItems: "stretch" }}>
               {group.ids.slice(row * columns, (row + 1) * columns).map(id => {
@@ -65,9 +67,9 @@ export function Details({
                 return (
                   <View key={id} testID={`insights-detail-metric-${id}`}
                     style={{ flex: 1, minWidth: 0, backgroundColor: colors.surface1, borderRadius: 8, padding: layout.compact ? 8 : 10, gap: 3 }}>
-                    <Text style={{ color: colors.foregroundMuted }}>{labels[id]}</Text>
-                    <Text style={{ color: colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{formatMetric(id, reading)}</Text>
-                    {!!context && <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{context}</Text>}
+                    <Text style={metricText}>{labels[id]}</Text>
+                    <Text style={{ ...metricText, fontVariant: ["tabular-nums"] }}>{formatMetric(id, reading)}</Text>
+                    {!!context && <Text style={{ ...secondaryInk, fontSize: 12 }}>{context}</Text>}
                   </View>
                 );
               })}
