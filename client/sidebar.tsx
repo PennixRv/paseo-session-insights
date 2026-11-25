@@ -65,7 +65,7 @@ export function SidebarMetrics({
           style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15, fontWeight: "400" }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
           style={{ minHeight: layout.compact ? 44 : 24, minWidth: 44, alignItems: "flex-end", justifyContent: "center" }}>
-          <Text style={{ color: accent, fontSize: 15, fontWeight: "400" }}>详情</Text>
+          <Text style={{ color: accent, fontSize: 14, fontWeight: "400" }}>详情</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -91,7 +91,9 @@ export function SidebarMetrics({
         if (!next) session.stopBilling();
         setOpen(next);
       }}>
-        <Modal.Content><Details session={session} theme={theme} layout={layout} codexSessionId={codexSessionId} /></Modal.Content>
+        <Modal.Content contentContainerStyle={layout.compact ? { paddingHorizontal: 16 } : undefined}>
+          <Details session={session} theme={theme} layout={layout} codexSessionId={codexSessionId} />
+        </Modal.Content>
       </Modal>}
     </View>
   );

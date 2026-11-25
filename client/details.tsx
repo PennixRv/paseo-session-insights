@@ -47,6 +47,7 @@ export function Details({
   const metricText = { color: colors.foreground, opacity: 0.9, fontSize: 15 };
   const secondaryInk = { color: colors.foreground, opacity: 0.82 };
   const note = { ...secondaryInk, fontSize: 12 };
+  const sessionIdText = { ...secondaryInk, fontSize: 14 };
   const emphasizedNote = { ...secondaryInk, fontSize: 13, fontWeight: "500" as const };
   const { cost, ttft, tps } = snapshot.metrics;
   const requestId = ttft.requestId === tps.requestId && ttft.sampleAt === tps.sampleAt &&
@@ -60,12 +61,19 @@ export function Details({
 
   return (
     <View style={{ gap: 14 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <Text testID="insights-codex-session-id" selectable
-          accessibilityLabel={codexSessionId ? `Codex 会话 ID ${codexSessionId}` : undefined}
-          style={{ flex: 1, minWidth: 0, ...secondaryInk, fontSize: 13 }}>
-          {codexSessionId ?? "等待 Codex 会话 ID"}
-        </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Text testID="insights-codex-session-id" selectable
+            accessibilityLabel={codexSessionId ? `Codex 会话 ID ${codexSessionId}` : undefined}
+            style={{ ...sessionIdText, flexShrink: 1 }}>
+            {codexSessionId ?? "等待 Codex 会话 ID"}
+          </Text>
+          {codexSessionId && <Pressable accessibilityRole="button" accessibilityLabel="复制 Codex 会话 ID"
+            onPress={() => copy(codexSessionId, "会话 ID")} hitSlop={6}
+            style={{ flexShrink: 0, minHeight: 44, justifyContent: "center" }}>
+            <Text style={sessionIdText}>复制</Text>
+          </Pressable>}
+        </View>
         <Pressable
           testID="insights-details-refresh"
           accessibilityRole="button"
@@ -75,24 +83,19 @@ export function Details({
             const wait = session.refreshFromDetails();
             setWaitUntil(wait ? Date.now() + wait : 0);
           }}
-          style={{ flexShrink: 0, paddingHorizontal: 8, minHeight: 32, justifyContent: "center" }}
+          hitSlop={4}
+          style={{ flexShrink: 0, paddingHorizontal: 4, minHeight: 44, justifyContent: "center" }}
         >
-          <Text style={{ color: colors.foreground, fontSize: 15, fontWeight: "500" }}>{reading ? "正在读取" : "刷新"}</Text>
+          <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "500" }}>{reading ? "正在读取" : "刷新"}</Text>
         </Pressable>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <Text accessibilityLiveRegion="polite" testID="insights-refresh-status" style={{ ...note, flex: 1 }}>
-          {[
-            reading ? "正在读取" : refreshLabels[mode],
-            lastReadAt !== undefined ? `上次读取 ${timeText(lastReadAt)}` : undefined,
-            !reading && waitUntil > Date.now() ? `${timeText(waitUntil)} 后可再次刷新` : undefined,
-          ].filter(Boolean).join(" · ")}
-        </Text>
-        {codexSessionId && <Pressable accessibilityRole="button" accessibilityLabel="复制 Codex 会话 ID"
-          onPress={() => copy(codexSessionId, "会话 ID")} style={{ minHeight: 44, justifyContent: "center", paddingHorizontal: 8 }}>
-          <Text style={emphasizedNote}>复制会话 ID</Text>
-        </Pressable>}
-      </View>
+      <Text accessibilityLiveRegion="polite" testID="insights-refresh-status" style={note}>
+        {[
+          reading ? "正在读取" : refreshLabels[mode],
+          lastReadAt !== undefined ? `上次读取 ${timeText(lastReadAt)}` : undefined,
+          !reading && waitUntil > Date.now() ? `${timeText(waitUntil)} 后可再次刷新` : undefined,
+        ].filter(Boolean).join(" · ")}
+      </Text>
       {snapshot.fixture && <Text style={metricText}>演示数据</Text>}
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
