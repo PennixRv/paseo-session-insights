@@ -1,4 +1,4 @@
-import { useAgent, useComposers, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { useAgent, useComposers, useWorkspace, type PluginClientContext, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useSyncExternalStore } from "react";
 import { findFocusedAgent } from "./client/focus.ts";
 import { createSession, type InsightSession } from "./client/session.ts";
@@ -25,8 +25,9 @@ export default function contribute(client: PluginClientContext) {
       return id === null ? null : entries.get(id) ?? null;
     });
     const agent = useAgent(entry?.agentId ?? "");
+    const workspaceName = useWorkspace(agent?.workspace ?? "", workspace => workspace.title?.trim() || workspace.name);
     if (!entry || !agent || agent.hostId !== props.host.id || agent.workspaceId !== entry.workspaceId) return null;
-    return <SidebarMetrics key={agent.ref.key} {...props} title={agent.title}
+    return <SidebarMetrics key={agent.ref.key} {...props} title={workspaceName}
       session={entry.session} codexSessionId={entry.runtimeId} />;
   }
 

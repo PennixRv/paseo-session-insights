@@ -20,7 +20,7 @@ export function SidebarMetrics({
 }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const [open, setOpen] = useState(false);
-  const { foreground, foregroundMuted } = theme.colors;
+  const { accent, foreground, foregroundMuted } = theme.colors;
   const metricSize = 13;
   const metricInk = { color: foreground, opacity: 0.82 };
   const columnGap = layout.compact ? 24 : 16;
@@ -61,14 +61,14 @@ export function SidebarMetrics({
   return (
     <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Text accessibilityRole="header" style={{ color: foreground, fontWeight: "600", fontSize: 14 }}>会话指标</Text>
-        <Text testID="insights-sidebar-title" numberOfLines={1} style={{ flex: 1, minWidth: 0, ...metricInk, fontSize: 14 }}>{title}</Text>
+        <Text testID="insights-sidebar-title" accessibilityRole="header" numberOfLines={1}
+          style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15 }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => {
           setOpen(true);
           void session.refresh();
         }}
-          style={{ minHeight: layout.compact ? 44 : 24, paddingHorizontal: 4, justifyContent: "center" }}>
-          <Text style={{ color: foregroundMuted, fontSize: 14 }}>详情</Text>
+          style={{ minHeight: layout.compact ? 44 : 24, minWidth: 44, alignItems: "flex-end", justifyContent: "center" }}>
+          <Text style={{ color: accent, fontSize: 14 }}>详情</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -82,7 +82,7 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", gap: columnGap }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize, fontWeight: "600" }}>
+            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>
             {group.ids.map(renderMetric)}
