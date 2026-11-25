@@ -96,7 +96,9 @@ export function Details({
       {snapshot.fixture && <Text style={metricText}>演示数据</Text>}
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
-          <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: 15, fontWeight: "500" }}>{group.title}</Text>
+          <Text accessibilityRole="header" style={{
+            color: colors.foreground, fontSize: 15, fontWeight: group.ids === detailGroups[2].ids || group.ids === detailGroups[3].ids ? "400" : "500",
+          }}>{group.title}</Text>
           {group.ids === detailGroups[2].ids && <Text style={note}>统计范围为当前工作区所属项目</Text>}
           {Array.from({ length: Math.ceil(group.ids.length / columns) }, (_, row) => (
             <View key={row} style={{ flexDirection: "row", gap: 6, alignItems: "stretch" }}>

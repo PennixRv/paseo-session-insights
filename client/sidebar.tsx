@@ -79,7 +79,7 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", gap: columnGap }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize, fontWeight: "500" }}>
+            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize, fontWeight: "400" }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>
             {group.ids.map(renderMetric)}
