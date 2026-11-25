@@ -54,9 +54,17 @@ function readCharge(row: z.infer<typeof rowSchema>, threadId: string): Charge {
   } };
 }
 
-function unavailable(state: Unavailable) {
-  const metric = { source: "cchp", state } satisfies Metric;
-  return { ttft: metric, tps: metric, cost: metric };
+function unavailable(state: Unavailable, costInfo?: Pick<Metric, "billing" | "retryAt">) {
+  const metric: Metric = { source: "cchp", state };
+  return { ttft: metric, tps: metric, cost: costInfo ? { ...metric, ...costInfo } : metric };
+}
+
+function coverage(scan: Scan): NonNullable<Metric["billing"]> {
+  return {
+    pages: !scan.finished ? "more" : scan.complete ? "complete" : "unconfirmed",
+    checked: scan.charges.size,
+    pending: [...scan.charges.values()].filter(charge => !charge.settled).length,
+  };
 }
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -84,15 +92,24 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
   const costByThread = new Map<string, { touchedAt: number; expires: number; metric?: Metric; scan?: Scan }>();
   const active = new Map<string, ReturnType<typeof read>>();
   async function read(threadId: string, lifetime: AbortSignal) {
-    if (clock() < retryAt) return unavailable("rate-limited");
     if (lifetime.aborted) return unavailable("error");
     const now = clock();
-    for (const [id, cost] of costByThread) if (cost.touchedAt + 300_000 <= now) costByThread.delete(id);
+    for (const [id, cost] of costByThread) {
+      if (!cost.scan && cost.touchedAt + 300_000 <= now) costByThread.delete(id);
+    }
     const cached = costByThread.get(threadId);
+    if (now < retryAt) {
+      return unavailable("rate-limited", {
+        retryAt,
+        ...(cached?.scan ? { billing: coverage(cached.scan) } : {}),
+      });
+    }
     const scan = cached?.metric && cached.expires > now ? undefined :
       cached?.scan ?? newScan(new Date(now).toISOString());
+    const previousCursor = scan?.cursor;
     function saveCost(value: NonNullable<typeof cached>) {
-      if (!costByThread.has(threadId) && costByThread.size >= 16) {
+      costByThread.delete(threadId);
+      if (costByThread.size >= 16) {
         const oldest = costByThread.keys().next();
         if (!oldest.done) costByThread.delete(oldest.value);
       }
@@ -128,7 +145,7 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
                 const retryAfter = response.headers.get("retry-after");
                 const millis = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 :
                   retryAfter && Number.isFinite(Date.parse(retryAfter)) ? Date.parse(retryAfter) - clock() : 30_000;
-                retryAt = clock() + Math.max(1000, Math.min(300_000, millis));
+                retryAt = Math.min(8_640_000_000_000_000, clock() + Math.max(1000, millis));
                 throw new GatewayError("rate-limited");
               }
               throw new GatewayError("error");
@@ -195,35 +212,35 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
           charges: [...recent.charges.values()] }, threadId, observedAt, "cchp")
         : unavailable("error");
       if (!scan) {
-        if (cached) cached.touchedAt = observedAt;
+        if (cached) saveCost({ ...cached, touchedAt: observedAt });
         return { ...readings, cost: cached?.metric };
       }
       const charges = [...scan.charges.values()];
       const projected = scan === recent ? readings : projectGateway({ complete: scan.complete, requests: [], charges },
         threadId, observedAt, "cchp");
-      const count = charges.length;
-      const pending = charges.filter(charge => !charge.settled).length;
+      const billing = coverage(scan);
       const cost = projected.cost && {
         ...projected.cost,
-        basis: [
-          !scan.finished ? `仍在查询，已读取 ${count} 条请求` :
-            scan.complete ? `已查询 ${count} 条请求` : `网关未确认完整覆盖，已读取 ${count} 条请求`,
-          pending ? `${pending} 条结算待确认` : "",
-        ].filter(Boolean).join("，"),
+        billing,
       };
       saveCost({
         touchedAt: observedAt, expires: scan.finished ? observedAt + 60_000 : 0,
         metric: scan.finished ? cost : cached?.metric, scan: scan.finished ? undefined : scan,
       });
+      if (!scan.finished && scan.cursor === previousCursor) {
+        return { ...readings, cost: { source: "cchp", state: "error", billing } satisfies Metric };
+      }
       const last = cached?.metric;
       return { ...readings, cost: !scan.finished && last && "value" in last && cost
-        ? { ...last, state: "stale" as const, basis: `显示上次结算值，本次已读取 ${count} 条请求` }
+        ? { ...last, state: "stale" as const, billing, basis: "显示上次核对的金额" }
         : cost };
     } catch (error) {
       const state = error instanceof GatewayError ? error.state : "error";
-      if (state === "rate-limited" && scan?.cursor) {
-        saveCost({ touchedAt: clock(), expires: 0, scan });
-      } else costByThread.delete(threadId);
+      if (state === "rate-limited") {
+        if (scan) saveCost({ touchedAt: clock(), expires: 0, metric: cached?.metric, scan });
+        return unavailable(state, { retryAt, ...(scan ? { billing: coverage(scan) } : {}) });
+      }
+      costByThread.delete(threadId);
       return unavailable(state);
     }
   }

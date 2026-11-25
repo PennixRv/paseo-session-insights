@@ -14,10 +14,22 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
   let foreground = false;
   let running = false;
   let settleAt: number | undefined;
+  let continuing = false;
+  let lastReadAt: number | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let status = {
+    mode: "paused" as "paused" | "automatic" | "settling" | "continuing",
+    reading: false,
+    lastReadAt,
+  };
 
-  function publish(snapshot: Snapshot) {
-    current = snapshot;
+  function notify() {
+    status = {
+      mode: !visible() ? "paused" : continuing ? "continuing" :
+        running ? "automatic" : settleAt === undefined ? "paused" : "settling",
+      reading: !!inFlight,
+      lastReadAt,
+    };
     for (const listener of listeners) listener();
   }
 
@@ -25,12 +37,13 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
 
   function schedule() {
     clearTimeout(timer);
-    if (!visible() || inFlight || (!running && settleAt === undefined)) return;
-    const due = Math.max(nextReadAt, settleAt ?? 0);
+    if (!visible() || inFlight || (!running && !continuing && settleAt === undefined)) return;
+    const retryAt = continuing && !running ? current.metrics.cost.retryAt ?? 0 : 0;
+    const due = Math.max(nextReadAt, settleAt ?? 0, retryAt);
     timer = setTimeout(() => {
-      settleAt = undefined;
-      void refresh(true);
-    }, Math.max(0, due - clock()));
+      if (clock() < due) schedule();
+      else void refresh(true);
+    }, Math.min(2_147_483_647, Math.max(0, due - clock())));
   }
 
   function refresh(automatic = false): Promise<void> {
@@ -40,59 +53,102 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
     clearTimeout(timer);
     const request = Promise.resolve().then(async () => {
       if (disposed || expected !== generation || (automatic && !visible())) return;
-      nextReadAt = clock() + refreshInterval;
+      const startedAt = clock();
+      if (settleAt !== undefined && startedAt >= settleAt) settleAt = undefined;
+      nextReadAt = startedAt + refreshInterval;
       const snapshot = await read();
-      if (!disposed && expected === generation) publish(snapshot);
+      if (disposed || expected !== generation) return;
+      current = snapshot;
+      const cost = snapshot.metrics.cost;
+      if (cost.billing?.pages !== "more" || cost.state === "error") continuing = false;
+      if (Object.values(snapshot.metrics).some(metric => metric.observedAt !== undefined)) lastReadAt = clock();
     }).catch(() => {
-      if (!disposed && expected === generation) publish(emptySnapshot("error"));
+      if (disposed || expected !== generation) return;
+      current = emptySnapshot("error");
+      continuing = false;
     }).finally(() => {
       if (inFlight === request) {
         inFlight = undefined;
         schedule();
+        notify();
       }
     });
     inFlight = request;
+    notify();
     return request;
   }
 
   return {
     current: () => current,
+    status: () => status,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
     refresh: () => refresh(),
+    refreshFromDetails() {
+      if (!visible() || inFlight) return 0;
+      const waitMs = nextReadAt - clock();
+      if (waitMs > 0) return waitMs;
+      void refresh();
+      return 0;
+    },
+    continueBilling() {
+      if (!visible() || current.metrics.cost.billing?.pages !== "more") return;
+      continuing = true;
+      schedule();
+      notify();
+    },
+    stopBilling() {
+      if (!continuing) return;
+      continuing = false;
+      schedule();
+      notify();
+    },
     setRunning(active: boolean) {
       if (running === active) return;
       running = active;
       settleAt = !active && visible() ? clock() + settleDelay : undefined;
       if (active && visible()) void refresh(true);
       schedule();
+      notify();
     },
     setForeground(active: boolean) {
       if (foreground === active) return;
       foreground = active;
       if (visible()) void refresh(true);
-      else settleAt = undefined;
+      else {
+        settleAt = undefined;
+        continuing = false;
+      }
       schedule();
+      notify();
     },
     attach() {
       readers++;
       if (visible()) void refresh(true);
       schedule();
+      notify();
       return () => {
         readers--;
-        if (!readers) settleAt = undefined;
+        if (!readers) {
+          settleAt = undefined;
+          continuing = false;
+        }
         schedule();
+        notify();
       };
     },
     invalidate() {
       generation += 1;
       inFlight = undefined;
       nextReadAt = 0;
-      publish(emptySnapshot("loading"));
+      lastReadAt = undefined;
+      continuing = false;
+      current = emptySnapshot("loading");
       if (visible()) void refresh(true);
       schedule();
+      notify();
     },
     dispose() {
       disposed = true;

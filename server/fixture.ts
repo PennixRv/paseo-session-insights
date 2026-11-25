@@ -7,7 +7,8 @@ export function fixtureSnapshot(observedAt: number): Snapshot {
     fixture: true,
     metrics: Object.fromEntries(metricIds.map((id, index) => [id, {
       state: "ready", value: values[index], source: "fixture", observedAt,
-      ...(id === "ttft" || id === "tps" ? { sampleAt: observedAt, basis: "合成样例" } : {}),
+      ...(id === "ttft" || id === "tps" ? { sampleAt: observedAt, basis: "合成样例", requestId: "fixture-request" } : {}),
+      ...(id === "cost" ? { billing: { pages: "complete", checked: 12, pending: 0 } } : {}),
     }])) as Snapshot["metrics"],
   };
 }

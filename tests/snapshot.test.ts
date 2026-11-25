@@ -123,6 +123,69 @@ test("visible sessions poll while running, settle once and pause when idle or hi
   session.dispose();
 });
 
+test("details continue billing at the allowed interval and stop at end, close, background or thread change", async ({ mock }) => {
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
+  const reads: number[] = [];
+  let pages: "more" | "complete" = "more";
+  let rateLimited = false;
+  const session = createSession(async () => {
+    reads.push(Date.now());
+    const snapshot = fixtureSnapshot(Date.now());
+    const billing = { pages, checked: 20, pending: 1 };
+    snapshot.metrics.cost = rateLimited
+      ? { state: "rate-limited", billing, retryAt: Date.now() + 45_000 }
+      : { ...snapshot.metrics.cost, billing };
+    return snapshot;
+  });
+  const tick = async (ms: number) => {
+    mock.timers.tick(ms);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+  session.setForeground(true);
+  const detach = session.attach();
+  await tick(0);
+  assert.deepEqual(session.status(), { mode: "paused", reading: false, lastReadAt: 1_000 });
+  assert.equal(session.refreshFromDetails(), 15_000);
+  session.continueBilling();
+  rateLimited = true;
+  await tick(15_000);
+  assert.equal(session.status().mode, "continuing");
+  await tick(44_999);
+  assert.deepEqual(reads, [1_000, 16_000]);
+  rateLimited = false;
+  pages = "complete";
+  await tick(1);
+  assert.equal(session.status().mode, "paused");
+  assert.equal(session.current().metrics.cost.billing?.pending, 1);
+  session.continueBilling();
+  await tick(60_000);
+  assert.deepEqual(reads, [1_000, 16_000, 61_000]);
+
+  pages = "more";
+  session.refreshFromDetails();
+  await tick(0);
+  session.continueBilling();
+  session.stopBilling();
+  await tick(30_000);
+  assert.equal(reads.length, 4);
+  session.continueBilling();
+  session.setForeground(false);
+  await tick(30_000);
+  assert.equal(reads.length, 4);
+  session.setForeground(true);
+  await tick(0);
+  session.continueBilling();
+  session.invalidate();
+  await tick(0);
+  await tick(30_000);
+  assert.equal(reads.length, 6);
+  session.continueBilling();
+  detach();
+  await tick(30_000);
+  assert.equal(reads.length, 6);
+  session.dispose();
+});
+
 test("left sidebar follows a unique focused handle and hides unmatched or ambiguous readings", () => {
   type Composers = Parameters<typeof findFocusedAgent>[0];
   type Handle = ReturnType<Composers>[number];

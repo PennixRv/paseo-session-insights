@@ -36,6 +36,13 @@ const fields = {
   observedAt: stamp.optional(),
   sampleAt: stamp.optional(),
   basis: z.string().max(80).optional(),
+  billing: z.object({
+    pages: z.enum(["more", "complete", "unconfirmed"]),
+    checked: stamp,
+    pending: stamp,
+  }).refine(info => info.pending <= info.checked).optional(),
+  retryAt: stamp.optional(),
+  requestId: z.string().min(1).max(256).optional(),
 };
 const metric = z.union([
   z.object({ ...fields, state: z.enum(["ready", "partial", "stale"]), value: z.union([finite, z.array(moneySchema).min(1).max(16)]) }),
@@ -51,6 +58,11 @@ export const snapshotSchema = z.object({
 }).superRefine(({ metrics }, ctx) => {
   for (const id of metricIds) {
     const reading = metrics[id];
+    if ((reading.billing && id !== "cost") ||
+        (reading.retryAt !== undefined && reading.state !== "rate-limited") ||
+        (reading.requestId && id !== "ttft" && id !== "tps")) {
+      ctx.addIssue({ code: "custom", path: ["metrics", id], message: "unexpected metric metadata" });
+    }
     if (!("value" in reading)) continue;
     const value = reading.value;
     const correct = id === "cost" ? Array.isArray(value) : typeof value === "number" &&

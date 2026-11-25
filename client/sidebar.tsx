@@ -21,9 +21,9 @@ export function SidebarMetrics({
   const snapshot = useSyncExternalStore(session.subscribe, session.current);
   const [open, setOpen] = useState(false);
   const { accent, foreground, foregroundMuted } = theme.colors;
-  const metricSize = 13;
+  const metricSize = 14;
   const metricInk = { color: foreground, opacity: 0.82 };
-  const columnGap = layout.compact ? 24 : 16;
+  const columnGap = layout.compact ? 28 : 20;
   useEffect(() => {
     session.setForeground(AppState.currentState === "active" || AppState.currentState === null);
     const detach = session.attach();
@@ -63,10 +63,7 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Text testID="insights-sidebar-title" accessibilityRole="header" numberOfLines={1}
           style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15 }}>{title}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => {
-          setOpen(true);
-          void session.refresh();
-        }}
+        <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
           style={{ minHeight: layout.compact ? 44 : 24, minWidth: 44, alignItems: "flex-end", justifyContent: "center" }}>
           <Text style={{ color: accent, fontSize: 14 }}>详情</Text>
         </Pressable>
@@ -82,7 +79,7 @@ export function SidebarMetrics({
       <View style={{ flexDirection: "row", gap: columnGap }}>
         {detailGroups.slice(2).map((group, index) => (
           <View key={group.title} style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize }}>
+            <Text accessibilityRole="header" style={{ color: foreground, fontSize: metricSize, fontWeight: "500" }}>
               {index === 0 ? "Trellis" : "Teamwork"}
             </Text>
             {group.ids.map(renderMetric)}
@@ -90,7 +87,10 @@ export function SidebarMetrics({
         ))}
       </View>
       {!!status && <Text style={{ color: foregroundMuted, fontSize: 11 }}>{status}</Text>}
-      {open && <Modal title="会话指标" open onOpenChange={setOpen}>
+      {open && <Modal title="会话指标" open onOpenChange={next => {
+        if (!next) session.stopBilling();
+        setOpen(next);
+      }}>
         <Modal.Content><Details session={session} theme={theme} layout={layout} codexSessionId={codexSessionId} /></Modal.Content>
       </Modal>}
     </View>
