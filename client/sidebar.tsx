@@ -62,10 +62,10 @@ export function SidebarMetrics({
     <View testID="insights-sidebar" style={{ paddingHorizontal: 8, paddingVertical: 5, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Text testID="insights-sidebar-title" accessibilityRole="header" numberOfLines={1}
-          style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15 }}>{title}</Text>
+          style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 15, fontWeight: "500" }}>{title}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="查看会话指标详情" onPress={() => setOpen(true)}
           style={{ minHeight: layout.compact ? 44 : 24, minWidth: 44, alignItems: "flex-end", justifyContent: "center" }}>
-          <Text style={{ color: accent, fontSize: 14 }}>详情</Text>
+          <Text style={{ color: accent, fontSize: 15, fontWeight: "500" }}>详情</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>

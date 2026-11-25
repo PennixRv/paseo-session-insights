@@ -15,7 +15,9 @@ const refreshLabels = {
 };
 
 function timeText(stamp: number): string {
-  return new Date(stamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(stamp).toLocaleTimeString([], {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  });
 }
 
 function metadata(reading: Metric): string {
@@ -45,6 +47,7 @@ export function Details({
   const metricText = { color: colors.foreground, opacity: 0.9, fontSize: 15 };
   const secondaryInk = { color: colors.foreground, opacity: 0.82 };
   const note = { ...secondaryInk, fontSize: 12 };
+  const emphasizedNote = { ...secondaryInk, fontSize: 13, fontWeight: "500" as const };
   const { cost, ttft, tps } = snapshot.metrics;
   const requestId = ttft.requestId === tps.requestId && ttft.sampleAt === tps.sampleAt &&
     ttft.source === tps.source ? ttft.requestId : undefined;
@@ -74,7 +77,7 @@ export function Details({
           }}
           style={{ flexShrink: 0, paddingHorizontal: 8, minHeight: 32, justifyContent: "center" }}
         >
-          <Text style={{ color: colors.foreground, fontSize: 15 }}>{reading ? "正在读取" : "刷新"}</Text>
+          <Text style={{ color: colors.foreground, fontSize: 15, fontWeight: "500" }}>{reading ? "正在读取" : "刷新"}</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -87,13 +90,13 @@ export function Details({
         </Text>
         {codexSessionId && <Pressable accessibilityRole="button" accessibilityLabel="复制 Codex 会话 ID"
           onPress={() => copy(codexSessionId, "会话 ID")} style={{ minHeight: 44, justifyContent: "center", paddingHorizontal: 8 }}>
-          <Text style={note}>复制会话 ID</Text>
+          <Text style={emphasizedNote}>复制会话 ID</Text>
         </Pressable>}
       </View>
       {snapshot.fixture && <Text style={metricText}>演示数据</Text>}
       {detailGroups.map(group => (
         <View key={group.title} style={{ gap: 8 }}>
-          <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: 15, fontWeight: "600" }}>{group.title}</Text>
+          <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: 15, fontWeight: "500" }}>{group.title}</Text>
           {group.ids === detailGroups[2].ids && <Text style={note}>统计范围为当前工作区所属项目</Text>}
           {Array.from({ length: Math.ceil(group.ids.length / columns) }, (_, row) => (
             <View key={row} style={{ flexDirection: "row", gap: 6, alignItems: "stretch" }}>
@@ -105,7 +108,7 @@ export function Details({
                     style={{ flex: 1, minWidth: 0, backgroundColor: colors.surface1, borderRadius: 8, padding: layout.compact ? 8 : 10, gap: 3 }}>
                     <Text style={metricText}>{labels[id]}</Text>
                     <Text style={{ ...metricText, fontVariant: ["tabular-nums"] }}>{formatMetric(id, reading)}</Text>
-                    {!!context && <Text style={{ ...secondaryInk, fontSize: 12 }}>{context}</Text>}
+                    {!!context && <Text style={note}>{context}</Text>}
                   </View>
                 );
               })}
@@ -113,7 +116,8 @@ export function Details({
           ))}
           {group.ids === detailGroups[0].ids && (coverage || retryText) && (
             <View style={{ gap: 4 }}>
-              <Text accessibilityLiveRegion="polite" testID="insights-billing-progress" style={note}>
+              <Text accessibilityLiveRegion="polite" testID="insights-billing-progress"
+                style={retryText || (coverage?.pending ?? 0) > 0 ? emphasizedNote : note}>
                 {[
                   coverage && `已核对 ${coverage.checked} 条`,
                   coverage && `待结算 ${coverage.pending} 条`,
@@ -126,7 +130,7 @@ export function Details({
                 <Pressable accessibilityRole="button" testID="insights-billing-continue"
                   onPress={mode === "continuing" ? session.stopBilling : session.continueBilling}
                   style={{ alignSelf: "flex-start", minHeight: 44, justifyContent: "center" }}>
-                  <Text style={metricText}>{mode === "continuing" ? "暂停核对" : "继续核对"}</Text>
+                  <Text style={{ ...metricText, fontWeight: "500" }}>{mode === "continuing" ? "暂停核对" : "继续核对"}</Text>
                 </Pressable>
               )}
             </View>
@@ -134,7 +138,7 @@ export function Details({
           {group.ids === detailGroups[1].ids && requestId && (
             <Pressable accessibilityRole="button" onPress={() => copy(requestId, "请求 ID")}
               style={{ alignSelf: "flex-start", minHeight: 44, justifyContent: "center" }}>
-              <Text style={note}>复制请求 ID</Text>
+              <Text style={emphasizedNote}>复制请求 ID</Text>
             </Pressable>
           )}
         </View>
