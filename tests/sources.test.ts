@@ -79,8 +79,8 @@ test("gateway selects one request and sums cleared amounts exactly once", () => 
       { id: "pending", threadId, settled: false }],
   };
   const projection = projectGateway(ledger, threadId, 100, "cchp");
-  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, requestId: "second", state: "ready", value: 6, basis: "已查请求中最近完成" });
-  assert.equal(projection.tps?.requestId, projection.ttft?.requestId);
+  assert.deepEqual(projection.ttft, { source: "cchp", observedAt: 100, sampleAt: 2, state: "ready", value: 6, basis: "已查请求中最近完成" });
+  assert.equal(projection.tps?.sampleAt, projection.ttft?.sampleAt);
   assert.equal(projection.tps?.state, "no-records");
   assert.deepEqual(projection.cost, { source: "cchp", observedAt: 100, state: "partial", value: [{ currency: "USD", amount: "0.3" }] });
   assert.throws(() => projectGateway(ledger, "another", 100, "cchp"), /thread mismatch/);
@@ -272,7 +272,7 @@ test("CCHP totals the session beyond three pages and refreshes performance betwe
   assert.equal(pages, 5);
   assert.deepEqual(first.cost, {
     source: "cchp", observedAt: 60_000, state: "ready",
-    billing: { pages: "complete", checked: 5, pending: 0 }, value: [{ currency: "CRED", amount: "5" }],
+    value: [{ currency: "CRED", amount: "5" }],
   });
   clock += 15_000;
   const second = await read("thread", signal);
@@ -323,22 +323,23 @@ test("CCHP resumes billing past 2,000 requests and checks the newest stream sepa
   }, () => clock);
   const partial = (await read("thread", signal)).cost;
   assert.equal(partial?.state, "partial");
-  assert.deepEqual(partial?.billing, { pages: "more", checked: 2000, pending: 0 });
+  assert.equal(partial.hasMoreBilling, true);
+  assert.deepEqual("value" in partial && partial.value, [{ currency: "CRED", amount: "2000" }]);
   clock += 15_000;
   const throttled = (await read("thread", signal)).cost;
   assert.equal(throttled?.state, "rate-limited");
-  assert.deepEqual(throttled?.billing, partial?.billing);
+  assert.equal(throttled?.hasMoreBilling, true);
   assert.equal(throttled?.retryAt, clock + 1000);
   assert.equal((await read("thread", signal)).cost?.state, "rate-limited");
   clock += 600_000;
   const final = await read("thread", signal);
   assert.deepEqual(deepPages, [...Array.from({ length: 10 }, (_, i) => i * 200), 2000, 2000]);
   assert.deepEqual(final.cost, { source: "cchp", observedAt: clock, state: "ready",
-    billing: { pages: "complete", checked: 2030, pending: 0 }, value: [{ currency: "CRED", amount: "2030" }] });
+    value: [{ currency: "CRED", amount: "2030" }] });
   assert.equal(final.ttft && "value" in final.ttft && final.ttft.value, clock);
 });
 
-test("CCHP distinguishes the final page, confirmed coverage and unsettled rows", async () => {
+test("CCHP ends pagination on the final page while the amount stays partial", async () => {
   const reader = createCchpReader({ baseUrl: "https://gateway.invalid", token: "fixture-key", apiKeyId: "key1" },
     async () => Response.json({ page: { nextCursor: null, totalIsLowerBound: true, items: [
       { requestId: "settled", sessionId: "thread", apiKeyId: "key1", completedAt: new Date(1).toISOString(),
@@ -347,5 +348,5 @@ test("CCHP distinguishes the final page, confirmed coverage and unsettled rows",
     ] } }), () => 2);
   const { cost } = await reader("thread", new AbortController().signal);
   assert.deepEqual(cost, { source: "cchp", observedAt: 2, state: "partial",
-    billing: { pages: "unconfirmed", checked: 2, pending: 1 }, value: [{ currency: "CRED", amount: "2.5" }] });
+    value: [{ currency: "CRED", amount: "2.5" }] });
 });

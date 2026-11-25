@@ -131,10 +131,10 @@ test("details continue billing at the allowed interval and stop at end, close, b
   const session = createSession(async () => {
     reads.push(Date.now());
     const snapshot = fixtureSnapshot(Date.now());
-    const billing = { pages, checked: 20, pending: 1 };
+    const hasMoreBilling = pages === "more" ? true : undefined;
     snapshot.metrics.cost = rateLimited
-      ? { state: "rate-limited", billing, retryAt: Date.now() + 45_000 }
-      : { ...snapshot.metrics.cost, billing };
+      ? { state: "rate-limited", hasMoreBilling, retryAt: Date.now() + 45_000 }
+      : { ...snapshot.metrics.cost, hasMoreBilling };
     return snapshot;
   });
   const tick = async (ms: number) => {
@@ -144,25 +144,26 @@ test("details continue billing at the allowed interval and stop at end, close, b
   session.setForeground(true);
   const detach = session.attach();
   await tick(0);
-  assert.deepEqual(session.status(), { mode: "paused", reading: false, lastReadAt: 1_000 });
-  assert.equal(session.refreshFromDetails(), 15_000);
+  assert.deepEqual(session.status(), { running: false, continuing: false, reading: false });
+  await session.refresh();
+  assert.equal(reads.length, 1);
   session.continueBilling();
   rateLimited = true;
   await tick(15_000);
-  assert.equal(session.status().mode, "continuing");
+  assert.equal(session.status().continuing, true);
   await tick(44_999);
   assert.deepEqual(reads, [1_000, 16_000]);
   rateLimited = false;
   pages = "complete";
   await tick(1);
-  assert.equal(session.status().mode, "paused");
-  assert.equal(session.current().metrics.cost.billing?.pending, 1);
+  assert.equal(session.status().continuing, false);
+  assert.equal(session.current().metrics.cost.hasMoreBilling, undefined);
   session.continueBilling();
   await tick(60_000);
   assert.deepEqual(reads, [1_000, 16_000, 61_000]);
 
   pages = "more";
-  session.refreshFromDetails();
+  await session.refresh();
   await tick(0);
   session.continueBilling();
   session.stopBilling();

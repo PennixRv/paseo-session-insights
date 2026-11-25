@@ -54,17 +54,9 @@ function readCharge(row: z.infer<typeof rowSchema>, threadId: string): Charge {
   } };
 }
 
-function unavailable(state: Unavailable, costInfo?: Pick<Metric, "billing" | "retryAt">) {
+function unavailable(state: Unavailable, costInfo?: Pick<Metric, "hasMoreBilling" | "retryAt">) {
   const metric: Metric = { source: "cchp", state };
   return { ttft: metric, tps: metric, cost: costInfo ? { ...metric, ...costInfo } : metric };
-}
-
-function coverage(scan: Scan): NonNullable<Metric["billing"]> {
-  return {
-    pages: !scan.finished ? "more" : scan.complete ? "complete" : "unconfirmed",
-    checked: scan.charges.size,
-    pending: [...scan.charges.values()].filter(charge => !charge.settled).length,
-  };
 }
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -101,7 +93,7 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
     if (now < retryAt) {
       return unavailable("rate-limited", {
         retryAt,
-        ...(cached?.scan ? { billing: coverage(cached.scan) } : {}),
+        hasMoreBilling: cached?.scan ? true : undefined,
       });
     }
     const scan = cached?.metric && cached.expires > now ? undefined :
@@ -218,27 +210,24 @@ export function createCchpReader(options: Options, fetchImpl = globalThis.fetch,
       const charges = [...scan.charges.values()];
       const projected = scan === recent ? readings : projectGateway({ complete: scan.complete, requests: [], charges },
         threadId, observedAt, "cchp");
-      const billing = coverage(scan);
-      const cost = projected.cost && {
-        ...projected.cost,
-        billing,
-      };
+      const cost = projected.cost && !scan.finished
+        ? { ...projected.cost, hasMoreBilling: true as const } : projected.cost;
       saveCost({
         touchedAt: observedAt, expires: scan.finished ? observedAt + 60_000 : 0,
         metric: scan.finished ? cost : cached?.metric, scan: scan.finished ? undefined : scan,
       });
       if (!scan.finished && scan.cursor === previousCursor) {
-        return { ...readings, cost: { source: "cchp", state: "error", billing } satisfies Metric };
+        return { ...readings, cost: { source: "cchp", state: "error", hasMoreBilling: true } satisfies Metric };
       }
       const last = cached?.metric;
       return { ...readings, cost: !scan.finished && last && "value" in last && cost
-        ? { ...last, state: "stale" as const, billing, basis: "显示上次核对的金额" }
+        ? { ...last, state: "stale" as const, hasMoreBilling: true as const, basis: "显示上次核对的金额" }
         : cost };
     } catch (error) {
       const state = error instanceof GatewayError ? error.state : "error";
       if (state === "rate-limited") {
         if (scan) saveCost({ touchedAt: clock(), expires: 0, metric: cached?.metric, scan });
-        return unavailable(state, { retryAt, ...(scan ? { billing: coverage(scan) } : {}) });
+        return unavailable(state, { retryAt, hasMoreBilling: scan ? true : undefined });
       }
       costByThread.delete(threadId);
       return unavailable(state);

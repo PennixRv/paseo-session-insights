@@ -64,8 +64,7 @@ export function projectGateway(raw: unknown, threadId: string, observedAt: numbe
   const latest = data.requests.filter(row => row.streaming).sort((a, b) =>
     b.completedAt - a.completedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   )[0];
-  const requestInfo = { source, observedAt, sampleAt: latest?.completedAt,
-    ...(latest ? { requestId: latest.id } : {}) };
+  const requestInfo = { source, observedAt, sampleAt: latest?.completedAt };
   const scope = data.complete ? "已查请求中最近完成" : `最近 ${new Set(data.charges.map(row => row.id)).size} 条请求中最近完成`;
   const timingBasis = latest?.basis === "ttfb" ? "按首字节计时" :
     latest?.basis === "ttft" ? "按首 token 计时" : undefined;

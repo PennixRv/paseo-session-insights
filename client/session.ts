@@ -15,21 +15,11 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
   let running = false;
   let settleAt: number | undefined;
   let continuing = false;
-  let lastReadAt: number | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let status = {
-    mode: "paused" as "paused" | "automatic" | "settling" | "continuing",
-    reading: false,
-    lastReadAt,
-  };
+  let status = { running, continuing, reading: false };
 
   function notify() {
-    status = {
-      mode: !visible() ? "paused" : continuing ? "continuing" :
-        running ? "automatic" : settleAt === undefined ? "paused" : "settling",
-      reading: !!inFlight,
-      lastReadAt,
-    };
+    status = { running, continuing, reading: !!inFlight };
     for (const listener of listeners) listener();
   }
 
@@ -60,8 +50,7 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       if (disposed || expected !== generation) return;
       current = snapshot;
       const cost = snapshot.metrics.cost;
-      if (cost.billing?.pages !== "more" || cost.state === "error") continuing = false;
-      if (Object.values(snapshot.metrics).some(metric => metric.observedAt !== undefined)) lastReadAt = clock();
+      if (!cost.hasMoreBilling || cost.state === "error") continuing = false;
     }).catch(() => {
       if (disposed || expected !== generation) return;
       current = emptySnapshot("error");
@@ -86,15 +75,8 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       return () => { listeners.delete(listener); };
     },
     refresh: () => refresh(),
-    refreshFromDetails() {
-      if (!visible() || inFlight) return 0;
-      const waitMs = nextReadAt - clock();
-      if (waitMs > 0) return waitMs;
-      void refresh();
-      return 0;
-    },
     continueBilling() {
-      if (!visible() || current.metrics.cost.billing?.pages !== "more") return;
+      if (!visible() || !current.metrics.cost.hasMoreBilling) return;
       continuing = true;
       schedule();
       notify();
@@ -143,7 +125,6 @@ export function createSession(read: () => Promise<Snapshot>, clock = Date.now) {
       generation += 1;
       inFlight = undefined;
       nextReadAt = 0;
-      lastReadAt = undefined;
       continuing = false;
       current = emptySnapshot("loading");
       if (visible()) void refresh(true);
